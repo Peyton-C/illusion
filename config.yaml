@@ -1,0 +1,9 @@
+illusion:
+  spreadsheet_location: "./inventory.xlsx"
+  discord:
+    token: ""
+    server_id: 
+    fourm_id: 
+
+  terminal:
+    log_to_term: false
