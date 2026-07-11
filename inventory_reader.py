@@ -70,6 +70,8 @@ class SpreadsheetManager:
                     item[header] = True
                 else:
                     item[header] = False
+            else:
+                item[header] = value
 
         return item
 

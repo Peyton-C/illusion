@@ -27,6 +27,67 @@ joanne_hat = r"""
   ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ 
 """.strip("\n")
 
+class DB_Commands:
+    async def handler_add_item(self, item_name, priority, quantity, vendor_1, link_1, 
+                              vendor_2 = None, link_2 = None, vendor_3 = None, link_3 = None, 
+                              vendor_4 = None, link_4 = None, vendor_5 = None, link_5 = None,):
+        global inventory
+
+        new_item = {
+            "NAME": item_name,
+            "PRIORITY": priority,
+            "ORDER_QUANTITY": quantity,
+            "LINK_1": link_1,
+            "VENDOR_1": vendor_1,
+            "LOW": "FALSE"
+        }
+        
+        new_sku = inventory.add_item(new_item)
+
+        vendors = [vendor_2, vendor_3, vendor_4, vendor_5]
+        links = [link_2, link_3, link_4, link_5]
+        
+        for i in range(len(vendors)):
+            if vendors[i] != None and links[i] != None:
+                inventory.add_vendor(new_sku, vendors[i], links[i])
+
+        inventory.save()
+        return new_sku
+    
+    async def handler_resolve(self, sku):
+        global inventory
+        
+        item = inventory.get_item(sku)
+
+        if item["LOW"] == True:
+            inventory.update_item(sku, {"LOW": "FALSE"})
+            inventory.save()
+            return True
+        else:
+            return False
+
+    async def handler_low(self, sku):
+        global inventory
+
+        item = inventory.get_item(sku)
+        if item["LOW"] == False:
+            inventory.update_item(sku, {"LOW": "TRUE"})
+            inventory.save()
+            print(item)
+            thread_with_message = await channel.create_thread(
+                name=f"{item["NAME"]}: {item["SKU"]}",
+                content=f"We are getting low on: {item["NAME"]}\nPriority: {item["PRIORITY"]}\nOrder Quantity: {item["ORDER_QUANTITY"]}\n\nLinks:\n{item["VENDOR_1"]}: {item["LINK_1"]}",
+            )
+
+            return True, thread_with_message
+        else:
+            return False, None
+
+async def clean_sku(sku):
+    if len(sku) <= 6:
+        sku = "SKU-" + ("0" * (6 - len(sku))) + sku
+    return sku
+
 async def terminal_loop():
     await bot.wait_until_ready()
 
@@ -61,25 +122,22 @@ async def terminal_loop():
                 else:
                     print(f"{hat_lines[i].ljust(hat_width + gap)}")
         
-        if command == "low" and len(parts) == 2 and len(parts[1]) >= 6:
-            if len(parts[1]) <= 6:
-                sku = "SKU-" + ("0" * 6 - len(parts[1])) + parts[1]
-            else:
-                sku = parts[1]
+        if len(parts) == 2 and len(parts[1]) >= 1:
+            sku = await clean_sku(parts[1])
 
             if inventory.validate_sku(sku):
-                item = inventory.get_item(sku)
-                if item["LOW"] == True:
-                    inventory.update_item(sku, {"LOW": "TRUE"})
-                    
-                    thread_with_message = await channel.create_thread(
-                        name=f"{item["NAME"]}: {item["SKU"]}",
-                        content=f"We are getting low on: {item["NAME"]}\nPriority: {item["PRIORITY"]}\nOrder Quantity: {item["ORDER_QUANTITY"]}\n\nLinks:\n{item["VENDOR_1"]}: {item["LINK_1"]}",
-                    )
-
-                    print(f"Created forum post: {thread_with_message.thread.name}")
-                else:
-                    print(f"{sku} already marked as low")
+                if command == "low":
+                    successful, thread_name = await command_handler.handler_low(sku)
+                    if successful:
+                        print(f"{sku} marked as low")
+                        print(f"Created forum post: {thread_name.thread.name}")
+                    else:
+                        print(f"{sku} already marked as low")
+                elif command == "resolve":
+                    if await command_handler.handler_resolve(sku):
+                        print(f"{sku} resolved")
+                    else:
+                        print(f"{sku} not marked as low")
             else:
                 print("Invalid sku")
 
@@ -118,64 +176,56 @@ async def about(interaction: discord.Interaction):
     await interaction.response.send_message(f"illusion\nversion: {illusion_version}")
 
 @bot.tree.command(name="resolve", description="Mark low stock warnings as resolved")
-async def ping(interaction: discord.Interaction):
+@app_commands.describe(sku="Item Sku")
+async def resolve(interaction: discord.Interaction, sku: str | None = None):
     channel = interaction.channel
 
-    print(channel.name)
-
-    if not isinstance(channel, discord.Thread):
+    if not isinstance(channel, discord.Thread) and sku == None:
         await interaction.response.send_message(
-            "This command must be used inside a low-stock thread.",
+            "This command requires a sku if you aren't inside a low-stock thread.",
             ephemeral=True,
         )
         return
+    if isinstance(channel, discord.Thread):
+        sku = channel.name.split(": ")[1]
+    else:
+        sku = await clean_sku(sku)
+    
+    await command_handler.handler_resolve(sku)
+    await interaction.response.send_message(f"Resolved: {sku}")
 
-    sku = channel.name.split(": ")
-    inventory.set_low(sku, False)
-    inventory.save()
-
-    await interaction.response.send_message(f"Resolved: {sku[1]}")
+@bot.tree.command(name="low", description="Mark stock as being low")
+@app_commands.describe(sku="Item Sku")
+async def low(interaction: discord.Interaction, sku: str):
+    sku = await clean_sku(sku)
+    success, thread_name = await command_handler.handler_low(sku)
+    if success:
+        await interaction.response.send_message(f"{sku} marked as low, therad: {thread_name.thread.name} created")
+    else:
+        await interaction.response.send_message(f"{sku} already marked as low")
 
 @bot.tree.command(name="add_item", description="Add item to inventory")
 @app_commands.describe(item_name="Item Name",
                        priority="Item Priority",
                        quantity="Number of units to order when stock low",
-                       vendor_1="Source 1 for Item",
-                       link_1="Source 1 Purchase Link",
-                       vendor_2="Source 2 for Item",
-                       link_2="Source 2 Purchase Link",
-                       vendor_3="Source 3 for Item",
-                       link_3="Source 3 Purchase Link",
-                       vendor_4="Source 4 for Item",
-                       link_4="Source 4 Purchase Link",
-                       vendor_5="Source 5 for Item",
-                       link_5="Source 5 Purchase Link",
+                       vendor_1="Source 1 for Item", link_1="Source 1 Purchase Link",
+                       vendor_2="Source 2 for Item", link_2="Source 2 Purchase Link",
+                       vendor_3="Source 3 for Item", link_3="Source 3 Purchase Link",
+                       vendor_4="Source 4 for Item", link_4="Source 4 Purchase Link",
+                       vendor_5="Source 5 for Item", link_5="Source 5 Purchase Link",
                        )
 
 async def add_item(interaction: discord.Interaction, item_name: str, priority: str, quantity: str, 
                    vendor_1: str, link_1: str, vendor_2: str | None = None, link_2: str | None = None, 
                    vendor_3: str | None = None, link_3: str | None = None, vendor_4: str | None = None, 
                    link_4: str | None = None, vendor_5: str | None = None, link_5: str | None = None):
-    new_item = {
-            "NAME": item_name,
-            "PRIORITY": priority,
-            "ORDER_QUANTITY": quantity,
-            "LINK_1": link_1,
-            "VENDOR_1": vendor_1
-        }
-    
-    new_sku = inventory.add_item(new_item)
 
-    vendors = [vendor_1, vendor_2, vendor_3, vendor_4, vendor_5]
-    links = [link_1, link_2, link_3, link_4, link_5]
-    
-    for i in range(len(vendors)):
-        if vendors[i] != None and links[i] != None:
-            inventory.add_vendor(new_sku, vendors[i], links[i])
+    new_sku = await command_handler.handler_add_item(item_name, priority, quantity, vendor_1, link_1, 
+                              vendor_2, link_2, vendor_3, link_3, vendor_4, link_4, vendor_5, link_5,)
 
     response_message = f"Added {item_name} to inventory, SKU: {new_sku}"
-    inventory.save()
-    print(f"{response_message}\n>")
+    if config["illusion"]["terminal"]["log_to_term"] == True:
+        print(f"{response_message}\n>")
     await interaction.response.send_message(response_message)
 
 @bot.event
@@ -188,6 +238,6 @@ with open("./config.yaml", "r") as file:
 TOKEN = config["illusion"]["discord"]["token"]
 GUILD_ID = config["illusion"]["discord"]["server_id"]
 FORUM_CHANNEL_ID = config["illusion"]["discord"]["fourm_id"] 
-
+command_handler = DB_Commands()
 inventory = SpreadsheetManager(config["illusion"]["spreadsheet_location"])
 bot.run(TOKEN)

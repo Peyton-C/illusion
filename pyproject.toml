@@ -1,6 +1,6 @@
 [project]
 name = "illusion"
-version = "0.0.1"
+version = "0.0.2"
 description = "The Perfect Illusion of an inventory system"
 readme = "README.md"
 requires-python = ">=3.14"
