@@ -6,6 +6,7 @@ import asyncio
 import yaml
 import tomllib
 from pathlib import Path
+import barcode_generator
 
 pyproject_path = Path(__file__).resolve().parents[0] / "./pyproject.toml"
 
@@ -173,11 +174,12 @@ class DB_Commands:
             "LINK_5",
             "VENDOR_5",
             "PRIORITY", 
+            "LOW_THREAD_ID",
             "TRACKING_MODE", 
             "LOW_THRESHOLD", 
             "UNIT", 
             "DECREASE_AMOUNT",
-            "ORDER_QUANTITY"
+            "ORDER_QUANTITY",
         ]
 
         return await make_table(results, exclude=exclude)
@@ -285,10 +287,13 @@ class DB_Commands:
         inventory.save()
 
         return "Low-stock thread archived."
+    
+    async def handler_generate_barcode(self, sku):
+        return barcode_generator.generate_barcode(sku)
 
 async def clean_sku(sku):
     if len(sku) <= 6:
-        sku = "SKU-" + ("0" * (6 - len(sku))) + sku
+        sku = "EER-" + ("0" * (6 - len(sku))) + sku
     return sku
 
 async def make_table(data, exclude=None):
@@ -483,7 +488,7 @@ async def terminal_loop():
                     else:
                         print(f"{hat_lines[i].ljust(hat_width + gap)}")
             
-            elif parts[0].startswith("SKU-"): # Basic bar code scanner support
+            elif parts[0].startswith("EER-"): # Basic bar code scanner support
                 response_message = await command_handler.handler_decrease(parts[0])
                 print(response_message)
         elif len(parts) == 2 and len(parts[1]) >= 1:
@@ -669,6 +674,18 @@ async def search(interaction: discord.Interaction, name: str):
         await interaction.response.send_message(response_message)
     else:
         await interaction.response.send_message(f"```{response_message}```")
+
+@bot.tree.command(name="generate_barcode", description="Generate a barcode")
+@app_commands.describe(sku="Item Sku")
+async def generate_barcode(interaction: discord.Interaction, sku: str):
+    sku = await clean_sku(sku)
+    if inventory.validate_sku(sku):
+        file_path = await command_handler.handler_generate_barcode(sku)
+        file = discord.File(file_path)
+
+        await interaction.response.send_message(f"Barcode", file=file)
+    else:
+        await interaction.response.send_message(f"Invalid sku {sku}")
 
 @bot.event
 async def setup_hook():

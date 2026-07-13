@@ -1,10 +1,12 @@
 [project]
 name = "illusion"
-version = "0.3.1"
+version = "0.3.2"
 description = "The Perfect Illusion of an inventory system"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "discord-py>=2.7.1",
+    "pillow>=12.3.0",
+    "python-barcode>=0.16.1",
     "pyyaml>=6.0.3",
 ]

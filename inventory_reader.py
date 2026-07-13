@@ -7,7 +7,7 @@ from typing import Any
 
 
 class SpreadsheetManager:
-    def __init__(self, file_path: str, sheet_name: str = "Inventory", sku_prefix: str = "SKU"):
+    def __init__(self, file_path: str, sheet_name: str = "Inventory", sku_prefix: str = "EER"):
         self.file_path = Path(file_path)
         self.sheet_name = sheet_name
         self.sku_prefix = sku_prefix
