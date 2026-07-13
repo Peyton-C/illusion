@@ -28,15 +28,21 @@ joanne_hat = r"""
 """.strip("\n")
 
 class DB_Commands:
-    async def handler_add_item(self, item_name, priority, quantity, vendor_1, link_1, 
-                              vendor_2 = None, link_2 = None, vendor_3 = None, link_3 = None, 
-                              vendor_4 = None, link_4 = None, vendor_5 = None, link_5 = None,):
+    async def handler_add_item(self, item_name, priority, order_quantity, tracking_mode="KANBAN", quantity_on_hand=None, 
+                               low_threshold=None, unit=None, decrease_amount=None, vendor_1 = None, link_1 = None, 
+                               vendor_2 = None, link_2 = None, vendor_3 = None, link_3 = None, 
+                               vendor_4 = None, link_4 = None, vendor_5 = None, link_5 = None,): 
         global inventory
 
         new_item = {
             "NAME": item_name,
             "PRIORITY": priority,
-            "ORDER_QUANTITY": quantity,
+            "ORDER_QUANTITY": order_quantity,
+            "TRACKING_MODE": tracking_mode,
+            "QUANTITY_ON_HAND": quantity_on_hand,
+            "LOW_THRESHOLD": low_threshold,
+            "UNIT": unit,
+            "DECREASE_AMOUNT": decrease_amount,
             "LINK_1": link_1,
             "VENDOR_1": vendor_1,
             "LINK_2": link_2,
@@ -64,7 +70,7 @@ class DB_Commands:
             item = inventory.get_item(sku)
             inventory.delete_item(sku)
             inventory.save()
-            response_message = f"Removed {item["NAME"]} from inventory, SKU: {sku}"
+            response_message = f"Removed {item['NAME']} from inventory, SKU: {sku}"
         else:
             response_message = f"Invalid sku: {sku}"
         
@@ -76,7 +82,7 @@ class DB_Commands:
         sku = await clean_sku(sku)
         if inventory.validate_sku(sku):
             item = inventory.get_item(sku)
-            response_message = await make_table(item)
+            response_message = await make_table(item, ["PRIORITY", "TRACKING_MODE", "LOW_THRESHOLD", "UNIT", "DECREASE_AMOUNT"])
         else:
             response_message = f"Invalid sku: {sku}"
         
@@ -92,7 +98,7 @@ class DB_Commands:
             if item["LOW"] == True:
                 inventory.update_item(sku, {"LOW": "FALSE"})
                 inventory.save()
-                response_message = f"{sku} nolonger marked as low"
+                response_message = f"{sku} no longer marked as low"
             else:
                 response_message = f"{sku} not marked as low"
         else:
@@ -101,27 +107,44 @@ class DB_Commands:
         return response_message
 
     async def handler_low(self, sku):
-        global inventory
+        global inventory, channel
 
         sku = await clean_sku(sku)
         if inventory.validate_sku(sku):
-            item = inventory.get_item(sku)
-            if item["LOW"] == False:
-                inventory.update_item(sku, {"LOW": "TRUE"})
-                inventory.save()
+            result = inventory.decrease_item(sku)
+            item = result["item"]
 
+            if result["low_changed"]:
                 thread_with_message = await channel.create_thread(
-                    name=f"{item["NAME"]}: {item["SKU"]}",
-                    content=f"We are getting low on: {item["NAME"]}\nPriority: {item["PRIORITY"]}\nOrder Quantity: {item["ORDER_QUANTITY"]}\n\nLinks:\n{item["VENDOR_1"]}: {item["LINK_1"]}",
+                    name=f"{item['NAME']}: {item['SKU']}",
+                    content=make_low_thread_content(item),
                 )
+                thread_name = thread_with_message.thread.name
 
-                response_message = f"{sku} marked as low, therad: {thread_with_message.thread.name} created"
-            else:
-                response_message = f"{sku} already marked as low"
+            if item["TRACKING_MODE"] == "KANBAN":
+                if result["low_changed"]:
+                    return f"{sku} marked as low, thread: {thread_name} created"
+
+                return f"{sku} already marked as low"
+            
+            unit = item["UNIT"] or "units"
+
+            response_message = (
+                f"{sku} decreased by "
+                f"{format_quantity(result['decrease_amount'])} {unit}: "
+                f"{format_quantity(result['old_quantity'])} -> "
+                f"{format_quantity(result['new_quantity'])}"
+            )
+
+            if result["low_changed"]:
+                response_message += f"\nLow threshold reached, thread: {thread_name} created"
+            elif item["LOW"]:
+                response_message += "\nItem is already marked as low."
         else:
             response_message = f"Invalid sku: {sku}"
         
         return response_message
+        
 
     async def handler_search(self, name: str):
         global inventory
@@ -142,9 +165,78 @@ class DB_Commands:
             "VENDOR_4",
             "LINK_5",
             "VENDOR_5",
+            "PRIORITY", 
+            "TRACKING_MODE", 
+            "LOW_THRESHOLD", 
+            "UNIT", 
+            "DECREASE_AMOUNT",
+            "ORDER_QUANTITY"
         ]
 
         return await make_table(results, exclude=exclude)
+    
+    async def handler_decrease(self, sku, amount=None):
+        global inventory
+        global channel
+
+        sku = await clean_sku(sku)
+
+        if inventory.validate_sku(sku):
+            result = inventory.decrease_item(sku, amount)
+            item = result["item"]
+
+            thread_name = None
+
+            if result["low_changed"]:
+                thread_with_message = await channel.create_thread(
+                    name=f"{item['NAME']}: {item['SKU']}",
+                    content=make_low_thread_content(item),
+                )
+                thread_name = thread_with_message.thread.name
+
+            if item["TRACKING_MODE"] == "KANBAN":
+                if result["low_changed"]:
+                    return f"{sku} marked as low, thread: {thread_name} created"
+
+                return f"{sku} already marked as low"
+
+            unit = item["UNIT"] or "units"
+
+            response_message = (
+                f"{sku} decreased by "
+                f"{format_quantity(result['decrease_amount'])} {unit}: "
+                f"{format_quantity(result['old_quantity'])} -> "
+                f"{format_quantity(result['new_quantity'])}"
+            )
+
+            if result["low_changed"]:
+                response_message += f"\nLow threshold reached, thread: {thread_name} created"
+            elif item["LOW"]:
+                response_message += "\nItem is already marked as low."
+        else:
+            response_message = f"Invalid sku: {sku}"
+
+        return response_message
+    
+    async def handler_set_stock(self, sku, quantity):
+        global inventory
+
+        sku = await clean_sku(sku)
+
+        if inventory.validate_sku(sku):
+            item = inventory.set_stock(sku, float(quantity))
+
+            unit = item["UNIT"] or "units"
+
+            response_message = (
+                f"{sku} stock set to "
+                f"{format_quantity(item['QUANTITY_ON_HAND'])} {unit}. "
+                f"Low: {item['LOW']}"
+            )
+        else:
+            response_message = f"Invalid sku: {sku}"
+
+        return response_message
 
 async def clean_sku(sku):
     if len(sku) <= 6:
@@ -260,6 +352,54 @@ async def make_table(data, exclude=None):
 
     return "\n".join([header, separator] + table_rows)
 
+def format_quantity(value):
+    if value is None:
+        return "N/A"
+
+    value = float(value)
+
+    return f"{value:g}"
+
+
+def make_low_thread_content(item):
+    links = []
+
+    for vendor_number in range(1, 6):
+        vendor = item.get(f"VENDOR_{vendor_number}")
+        link = item.get(f"LINK_{vendor_number}")
+
+        if vendor or link:
+            links.append(f"{vendor or 'Vendor'}: {link or 'N/A'}")
+
+    if not links:
+        links.append("N/A")
+
+    stock_lines = []
+
+    if item["TRACKING_MODE"] != "KANBAN":
+        stock_lines.extend(
+            [
+                f"Current Stock: {format_quantity(item['QUANTITY_ON_HAND'])} "
+                f"{item['UNIT'] or ''}".strip(),
+                f"Low Threshold: {format_quantity(item['LOW_THRESHOLD'])} "
+                f"{item['UNIT'] or ''}".strip(),
+            ]
+        )
+
+    return "\n".join(
+        [
+            f"We are getting low on: {item['NAME']}",
+            f"SKU: {item['SKU']}",
+            f"Tracking Mode: {item['TRACKING_MODE']}",
+            f"Priority: {item['PRIORITY']}",
+            f"Order Quantity: {item['ORDER_QUANTITY']}",
+            *stock_lines,
+            "",
+            "Links:",
+            *links,
+        ]
+    )
+
 async def terminal_loop():
     await bot.wait_until_ready()
 
@@ -272,29 +412,29 @@ async def terminal_loop():
         if not text:
             continue
 
-        parts = text.split(maxsplit=1)
+        parts = text.split(maxsplit=2) # Make sure to update this is commands w/ 3+ fields are added
         command = parts[0].lower()
-        
-        if command == "exit":
-            inventory.save()
-            await bot.close()
 
-        if command == "about":
-            text = f"""illusion \nversion: {illusion_version}""".strip("\n")
-            
-            hat_lines = joanne_hat.splitlines()
-            text_lines = text.splitlines()
+        if len(parts) == 1:
+            if command == "exit":
+                inventory.save()
+                await bot.close()
 
-            hat_width = max(len(line) for line in hat_lines)
-            gap = 4
+            elif command == "about":
+                text = f"""illusion \nversion: {illusion_version}""".strip("\n")
+                
+                hat_lines = joanne_hat.splitlines()
+                text_lines = text.splitlines()
 
-            for i in range(len(hat_lines)):
-                if len(text_lines) > i:
-                    print(f"{hat_lines[i].ljust(hat_width + gap)}{text_lines[i]}")
-                else:
-                    print(f"{hat_lines[i].ljust(hat_width + gap)}")
-        
-        if len(parts) == 2 and len(parts[1]) >= 1:
+                hat_width = max(len(line) for line in hat_lines)
+                gap = 4
+
+                for i in range(len(hat_lines)):
+                    if len(text_lines) > i:
+                        print(f"{hat_lines[i].ljust(hat_width + gap)}{text_lines[i]}")
+                    else:
+                        print(f"{hat_lines[i].ljust(hat_width + gap)}")
+        elif len(parts) == 2 and len(parts[1]) >= 1:
                 if command == "low":
                     response_message = await command_handler.handler_low(parts[1])
                 elif command == "resolve":
@@ -305,7 +445,13 @@ async def terminal_loop():
                     response_message = await command_handler.handler_info(parts[1])
                 elif command == "search":
                     response_message = await command_handler.handler_search(parts[1])
+                elif command == "decrease":
+                    response_message = await command_handler.handler_decrease(parts[1])
                 print(response_message)
+        elif len(parts) == 3 and len(parts[1]) >= 1:
+            if command == "set":
+                response_message = await command_handler.handler_set_stock(parts[1], parts[2])
+            print(response_message)
 
 
 @bot.event
@@ -363,6 +509,18 @@ async def low(interaction: discord.Interaction, sku: str):
     response_message = await command_handler.handler_low(sku)
     await interaction.response.send_message(response_message)
 
+@bot.tree.command(name="set_stock", description="Set current stock")
+@app_commands.describe(sku="Item Sku", value="Stock amount")
+async def set_stock(interaction: discord.Interaction, sku: str, value: str):
+    response_message = await command_handler.handler_set_stock(sku, value)
+    await interaction.response.send_message(response_message)
+
+@bot.tree.command(name="decrease", description="Decrease current stock")
+@app_commands.describe(sku="Item Sku")
+async def decrease(interaction: discord.Interaction, sku: str):
+    response_message = await command_handler.handler_decrease(sku)
+    await interaction.response.send_message(response_message)
+
 @bot.tree.command(name="info", description="Get info about an item")
 @app_commands.describe(sku="Item Sku")
 async def info(interaction: discord.Interaction, sku: str):
@@ -379,10 +537,11 @@ async def delete(interaction: discord.Interaction, sku: str):
     response_message = await command_handler.handler_delete_item(sku)
     await interaction.response.send_message(response_message)
 
-@bot.tree.command(name="add_item", description="Add item to inventory")
+@bot.tree.command(name="add_item", description="Add item to inventory w/ per unit tracking")
 @app_commands.describe(item_name="Item Name",
                        priority="Item Priority",
-                       quantity="Number of units to order when stock low",
+                       order_quantity="Number of units to order when stock low", unit="Unit name",
+                       quantity="Number of units on hand", low_threshold="Minimum Stock",
                        vendor_1="Source 1 for Item", link_1="Source 1 Purchase Link",
                        vendor_2="Source 2 for Item", link_2="Source 2 Purchase Link",
                        vendor_3="Source 3 for Item", link_3="Source 3 Purchase Link",
@@ -390,13 +549,59 @@ async def delete(interaction: discord.Interaction, sku: str):
                        vendor_5="Source 5 for Item", link_5="Source 5 Purchase Link",
                        )
 
-async def add_item(interaction: discord.Interaction, item_name: str, priority: str, quantity: str, 
+async def add_item(interaction: discord.Interaction, item_name: str, priority: str, 
+                   quantity: str, order_quantity: str, low_threshold: str, unit: str,
                    vendor_1: str, link_1: str, vendor_2: str | None = None, link_2: str | None = None, 
                    vendor_3: str | None = None, link_3: str | None = None, vendor_4: str | None = None, 
                    link_4: str | None = None, vendor_5: str | None = None, link_5: str | None = None):
 
-    response_message = await command_handler.handler_add_item(item_name, priority, quantity, vendor_1, link_1, 
-                              vendor_2, link_2, vendor_3, link_3, vendor_4, link_4, vendor_5, link_5,)
+    response_message = await command_handler.handler_add_item(item_name, priority, order_quantity, "Quantity", quantity, low_threshold, unit, "1", vendor_1, link_1, 
+                                                              vendor_2, link_2, vendor_3, link_3, vendor_4, link_4, vendor_5, link_5,)
+
+    await interaction.response.send_message(response_message)
+
+@bot.tree.command(name="add_kanban", description="Add item to inventory w/ kanban tracking")
+@app_commands.describe(item_name="Item Name",
+                       priority="Item Priority",
+                       order_quantity="Number of units to order when stock low",
+                       vendor_1="Source 1 for Item", link_1="Source 1 Purchase Link",
+                       vendor_2="Source 2 for Item", link_2="Source 2 Purchase Link",
+                       vendor_3="Source 3 for Item", link_3="Source 3 Purchase Link",
+                       vendor_4="Source 4 for Item", link_4="Source 4 Purchase Link",
+                       vendor_5="Source 5 for Item", link_5="Source 5 Purchase Link",
+                       )
+
+async def add_kanban(interaction: discord.Interaction, item_name: str, priority: str, order_quantity: str,
+                   vendor_1: str, link_1: str, vendor_2: str | None = None, link_2: str | None = None, 
+                   vendor_3: str | None = None, link_3: str | None = None, vendor_4: str | None = None, 
+                   link_4: str | None = None, vendor_5: str | None = None, link_5: str | None = None):
+
+    response_message = await command_handler.handler_add_item(item_name, priority, order_quantity, "Kanban", None, None, None, None, vendor_1, link_1, 
+                                                              vendor_2, link_2, vendor_3, link_3, vendor_4, link_4, vendor_5, link_5,)
+
+    await interaction.response.send_message(response_message)
+
+@bot.tree.command(name="add_hybrid", description="Add item to inventory w/ hybrid tracking")
+@app_commands.describe(item_name="Item Name",
+                       priority="Item Priority",
+                       order_quantity="Number of units to order when stock low", unit="Unit name",
+                       quantity="Number of units on hand", low_threshold="Minimum Stock", decrease_amount="Amount to decrease by",
+                       vendor_1="Source 1 for Item", link_1="Source 1 Purchase Link",
+                       vendor_2="Source 2 for Item", link_2="Source 2 Purchase Link",
+                       vendor_3="Source 3 for Item", link_3="Source 3 Purchase Link",
+                       vendor_4="Source 4 for Item", link_4="Source 4 Purchase Link",
+                       vendor_5="Source 5 for Item", link_5="Source 5 Purchase Link",
+                       )
+
+async def add_hybrid(interaction: discord.Interaction, item_name: str, priority: str, 
+                   quantity: str, order_quantity: str, low_threshold: str, unit: str, decrease_amount: str,
+                   vendor_1: str, link_1: str, vendor_2: str | None = None, link_2: str | None = None, 
+                   vendor_3: str | None = None, link_3: str | None = None, vendor_4: str | None = None, 
+                   link_4: str | None = None, vendor_5: str | None = None, link_5: str | None = None):
+
+    response_message = await command_handler.handler_add_item(item_name, priority, order_quantity, "Hybrid", 
+                                                              quantity, low_threshold, unit, decrease_amount, vendor_1, link_1, 
+                                                              vendor_2, link_2, vendor_3, link_3, vendor_4, link_4, vendor_5, link_5,)
 
     await interaction.response.send_message(response_message)
 

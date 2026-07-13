@@ -16,6 +16,7 @@ class SpreadsheetManager:
         self.sku_padding = 6
 
         self.default_headers = ["SKU", "NAME", "PRIORITY", "ORDER_QUANTITY", "LOW", 
+                                "TRACKING_MODE", "QUANTITY_ON_HAND", "LOW_THRESHOLD", "UNIT", "DECREASE_AMOUNT",
                                 "LINK_1", "VENDOR_1", "LINK_2", "VENDOR_2", "LINK_3", "VENDOR_3",
                                 "LINK_4", "VENDOR_4", "LINK_5","VENDOR_5",
         ]
@@ -52,8 +53,23 @@ class SpreadsheetManager:
                     priority TEXT,
                     order_quantity TEXT,
                     low INTEGER NOT NULL DEFAULT 0,
+
+                    tracking_mode TEXT NOT NULL DEFAULT 'KANBAN',
+                    quantity_on_hand REAL,
+                    low_threshold REAL,
+                    unit TEXT,
+                    decrease_amount REAL NOT NULL DEFAULT 1.0,
+
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+                    CHECK (
+                        tracking_mode IN (
+                            'KANBAN',
+                            'QUANTITY',
+                            'HYBRID'
+                        )
+                    )
                 );
 
                 CREATE TABLE IF NOT EXISTS vendors (
@@ -92,10 +108,35 @@ class SpreadsheetManager:
                 END;
                 """
             )
+
             self.connection.commit()
 
     def _get_headers(self) -> list[str]:
         return list(self.default_headers)
+    
+    def _normalize_tracking_mode(self, value: Any) -> str:
+        if value is None:
+            return "KANBAN"
+
+        tracking_mode = str(value).strip().upper()
+
+        if tracking_mode not in {"KANBAN", "QUANTITY", "HYBRID"}:
+            raise ValueError(
+                "TRACKING_MODE must be one of: KANBAN, QUANTITY, HYBRID."
+            )
+
+        return tracking_mode
+
+
+    def _normalize_float(
+        self,
+        value: Any,
+        default: float | None = None,
+    ) -> float | None:
+        if value is None or value == "":
+            return default
+
+        return float(value)
 
     def _normalize_bool(self, value: Any) -> int:
         if isinstance(value, bool):
@@ -151,6 +192,11 @@ class SpreadsheetManager:
             "PRIORITY": row["priority"],
             "ORDER_QUANTITY": row["order_quantity"],
             "LOW": self._bool_to_python(row["low"]),
+            "TRACKING_MODE": row["tracking_mode"],
+            "QUANTITY_ON_HAND": row["quantity_on_hand"],
+            "LOW_THRESHOLD": row["low_threshold"],
+            "UNIT": row["unit"],
+            "DECREASE_AMOUNT": row["decrease_amount"],
         }
 
         for vendor_number in range(1, 6):
@@ -201,7 +247,7 @@ class SpreadsheetManager:
         with self.lock:
             rows = self.connection.execute(
                 """
-                SELECT sku, name, priority, order_quantity, low
+                SELECT sku, name, priority, order_quantity, low, tracking_mode, quantity_on_hand, low_threshold, unit, decrease_amount
                 FROM items
                 ORDER BY sku
                 """
@@ -216,7 +262,7 @@ class SpreadsheetManager:
         with self.lock:
             row = self.connection.execute(
                 """
-                SELECT sku, name, priority, order_quantity, low
+                SELECT sku, name, priority, order_quantity, low, tracking_mode, quantity_on_hand, low_threshold, unit, decrease_amount
                 FROM items
                 WHERE sku = ?
                 """,
@@ -237,6 +283,19 @@ class SpreadsheetManager:
             order_quantity = item_data.get("ORDER_QUANTITY")
             low = self._normalize_bool(item_data.get("LOW"))
 
+            tracking_mode = self._normalize_tracking_mode(
+                item_data.get("TRACKING_MODE")
+            )
+            quantity_on_hand = self._normalize_float(
+                item_data.get("QUANTITY_ON_HAND")
+            )
+            low_threshold = self._normalize_float(item_data.get("LOW_THRESHOLD"))
+            unit = item_data.get("UNIT")
+            decrease_amount = self._normalize_float(
+                item_data.get("DECREASE_AMOUNT"),
+                1.0,
+            )
+
             if not name:
                 raise ValueError("NAME is required.")
 
@@ -247,9 +306,14 @@ class SpreadsheetManager:
                     name,
                     priority,
                     order_quantity,
-                    low
+                    low,
+                    tracking_mode,
+                    quantity_on_hand,
+                    low_threshold,
+                    unit,
+                    decrease_amount
                 )
-                VALUES (?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     new_sku,
@@ -257,6 +321,11 @@ class SpreadsheetManager:
                     priority,
                     order_quantity,
                     low,
+                    tracking_mode,
+                    quantity_on_hand,
+                    low_threshold,
+                    unit,
+                    decrease_amount,
                 ),
             )
 
@@ -301,7 +370,7 @@ class SpreadsheetManager:
                 if header not in self.default_headers:
                     raise ValueError(f"Header '{header}' does not exist.")
 
-                if header in {"NAME", "PRIORITY", "ORDER_QUANTITY", "LOW"}:
+                if header in {"NAME", "PRIORITY", "ORDER_QUANTITY", "LOW", "TRACKING_MODE", "QUANTITY_ON_HAND", "LOW_THRESHOLD", "UNIT","DECREASE_AMOUNT"}:
                     item_updates[header] = value
                     continue
 
@@ -320,7 +389,13 @@ class SpreadsheetManager:
                     "PRIORITY": "priority",
                     "ORDER_QUANTITY": "order_quantity",
                     "LOW": "low",
+                    "TRACKING_MODE": "tracking_mode",
+                    "QUANTITY_ON_HAND": "quantity_on_hand",
+                    "LOW_THRESHOLD": "low_threshold",
+                    "UNIT": "unit",
+                    "DECREASE_AMOUNT": "decrease_amount",
                 }
+
 
                 assignments = []
                 values = []
@@ -331,6 +406,14 @@ class SpreadsheetManager:
 
                     if header == "LOW":
                         values.append(self._normalize_bool(value))
+                    elif header == "TRACKING_MODE":
+                        values.append(self._normalize_tracking_mode(value))
+                    elif header in {
+                        "QUANTITY_ON_HAND",
+                        "LOW_THRESHOLD",
+                        "DECREASE_AMOUNT",
+                    }:
+                        values.append(self._normalize_float(value))
                     else:
                         values.append(value)
 
@@ -426,6 +509,139 @@ class SpreadsheetManager:
 
             self.connection.commit()
             return cursor.rowcount > 0
+        
+    def decrease_item(self, sku: str, amount: float | None = None,) -> dict[str, Any] | None:
+        with self.lock:
+            row = self.connection.execute(
+                """
+                SELECT
+                    sku,
+                    name,
+                    priority,
+                    order_quantity,
+                    low,
+                    tracking_mode,
+                    quantity_on_hand,
+                    low_threshold,
+                    unit,
+                    decrease_amount
+                FROM items
+                WHERE sku = ?
+                """,
+                (sku,),
+            ).fetchone()
+
+            if row is None:
+                return None
+
+            item = self._row_to_dict(row)
+            tracking_mode = item["TRACKING_MODE"]
+            was_low = item["LOW"]
+
+            if tracking_mode == "KANBAN":
+                if not was_low:
+                    self.connection.execute(
+                        """
+                        UPDATE items
+                        SET low = 1
+                        WHERE sku = ?
+                        """,
+                        (sku,),
+                    )
+                    self.connection.commit()
+
+                return {
+                    "item": self.get_item(sku),
+                    "tracking_mode": tracking_mode,
+                    "quantity_changed": False,
+                    "old_quantity": None,
+                    "new_quantity": None,
+                    "decrease_amount": None,
+                    "low_changed": not was_low,
+                }
+
+            old_quantity = self._normalize_float(
+                item["QUANTITY_ON_HAND"],
+                0.0,
+            )
+            decrease_amount = self._normalize_float(
+                amount,
+                item["DECREASE_AMOUNT"] or 1.0,
+            )
+
+            if decrease_amount is None or decrease_amount <= 0:
+                raise ValueError("Decrease amount must be greater than 0.")
+
+            new_quantity = max(0.0, old_quantity - decrease_amount)
+
+            low_threshold = self._normalize_float(item["LOW_THRESHOLD"])
+
+            if low_threshold is None:
+                should_be_low = new_quantity <= 0
+            else:
+                should_be_low = new_quantity <= low_threshold
+
+            new_low = was_low or should_be_low
+
+            self.connection.execute(
+                """
+                UPDATE items
+                SET quantity_on_hand = ?,
+                    low = ?
+                WHERE sku = ?
+                """,
+                (
+                    new_quantity,
+                    self._normalize_bool(new_low),
+                    sku,
+                ),
+            )
+
+            self.connection.commit()
+
+            return {
+                "item": self.get_item(sku),
+                "tracking_mode": tracking_mode,
+                "quantity_changed": True,
+                "old_quantity": old_quantity,
+                "new_quantity": new_quantity,
+                "decrease_amount": decrease_amount,
+                "low_changed": should_be_low and not was_low,
+            }
+
+
+    def set_stock(self, sku: str, quantity: float) -> dict[str, Any] | None:
+        with self.lock:
+            item = self.get_item(sku)
+
+            if item is None:
+                return None
+
+            quantity = float(quantity)
+            low_threshold = self._normalize_float(item["LOW_THRESHOLD"])
+
+            if low_threshold is None:
+                low = quantity <= 0
+            else:
+                low = quantity <= low_threshold
+
+            self.connection.execute(
+                """
+                UPDATE items
+                SET quantity_on_hand = ?,
+                    low = ?
+                WHERE sku = ?
+                """,
+                (
+                    quantity,
+                    self._normalize_bool(low),
+                    sku,
+                ),
+            )
+
+            self.connection.commit()
+
+            return self.get_item(sku)
 
     def add_vendor(self, sku: str, vendor_name: str, link: str,) -> bool:
         with self.lock:
@@ -482,7 +698,7 @@ class SpreadsheetManager:
         with self.lock:
             rows = self.connection.execute(
                 """
-                SELECT sku, name, priority, order_quantity, low
+                SELECT sku, name, priority, order_quantity, low, tracking_mode, quantity_on_hand, low_threshold, unit, decrease_amount
                 FROM items
                 WHERE LOWER(name) LIKE LOWER(?) ESCAPE '\\'
                 ORDER BY
