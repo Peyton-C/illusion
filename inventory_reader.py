@@ -79,6 +79,9 @@ class SpreadsheetManager:
                 CREATE INDEX IF NOT EXISTS idx_vendors_sku
                     ON vendors (sku);
 
+                CREATE INDEX IF NOT EXISTS idx_items_name_nocase
+                    ON items (name COLLATE NOCASE);
+
                 CREATE TRIGGER IF NOT EXISTS trg_items_updated_at
                 AFTER UPDATE ON items
                 FOR EACH ROW
@@ -186,6 +189,13 @@ class SpreadsheetManager:
                 return None
 
             return str(row["sku"])
+        
+    def _escape_like(self, value: str) -> str:
+        return (
+            value.replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        )
 
     def read_all(self) -> list[dict[str, Any]]:
         with self.lock:
@@ -457,6 +467,42 @@ class SpreadsheetManager:
                     return True
 
             return False
+        
+    def search_items(self, name_query: str, limit: int = 10) -> list[dict[str, Any]]:
+        name_query = name_query.strip()
+
+        if not name_query:
+            return []
+
+        escaped_query = self._escape_like(name_query)
+
+        contains_pattern = f"%{escaped_query}%"
+        prefix_pattern = f"{escaped_query}%"
+
+        with self.lock:
+            rows = self.connection.execute(
+                """
+                SELECT sku, name, priority, order_quantity, low
+                FROM items
+                WHERE LOWER(name) LIKE LOWER(?) ESCAPE '\\'
+                ORDER BY
+                    CASE
+                        WHEN LOWER(name) = LOWER(?) THEN 0
+                        WHEN LOWER(name) LIKE LOWER(?) ESCAPE '\\' THEN 1
+                        ELSE 2
+                    END,
+                    name COLLATE NOCASE
+                LIMIT ?
+                """,
+                (
+                    contains_pattern,
+                    name_query,
+                    prefix_pattern,
+                    limit,
+                ),
+            ).fetchall()
+
+            return [self._row_to_dict(row) for row in rows]
 
     def save(self) -> None:
         with self.lock:

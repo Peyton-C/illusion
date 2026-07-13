@@ -123,6 +123,29 @@ class DB_Commands:
         
         return response_message
 
+    async def handler_search(self, name: str):
+        global inventory
+
+        results = inventory.search_items(name, limit=10)
+
+        if not results:
+            return f"No items found matching: {name}"
+
+        exclude = [
+            "LINK_1",
+            "VENDOR_1",
+            "LINK_2",
+            "VENDOR_2",
+            "LINK_3",
+            "VENDOR_3",
+            "LINK_4",
+            "VENDOR_4",
+            "LINK_5",
+            "VENDOR_5",
+        ]
+
+        return await make_table(results, exclude=exclude)
+
 async def clean_sku(sku):
     if len(sku) <= 6:
         sku = "SKU-" + ("0" * (6 - len(sku))) + sku
@@ -272,15 +295,16 @@ async def terminal_loop():
                     print(f"{hat_lines[i].ljust(hat_width + gap)}")
         
         if len(parts) == 2 and len(parts[1]) >= 1:
-                sku = parts[1]
                 if command == "low":
-                    response_message = await command_handler.handler_low(sku)
+                    response_message = await command_handler.handler_low(parts[1])
                 elif command == "resolve":
-                    response_message = await command_handler.handler_resolve(sku)
+                    response_message = await command_handler.handler_resolve(parts[1])
                 elif command == "delete":
-                    response_message = await command_handler.handler_delete_item(sku)
+                    response_message = await command_handler.handler_delete_item(parts[1])
                 elif command == "info":
-                    response_message = await command_handler.handler_info(sku)
+                    response_message = await command_handler.handler_info(parts[1])
+                elif command == "search":
+                    response_message = await command_handler.handler_search(parts[1])
                 print(response_message)
 
 
@@ -343,7 +367,11 @@ async def low(interaction: discord.Interaction, sku: str):
 @app_commands.describe(sku="Item Sku")
 async def info(interaction: discord.Interaction, sku: str):
     response_message = await command_handler.handler_info(sku)
-    await interaction.response.send_message(f"```{response_message}```")
+
+    if response_message.startswith("Invalid sku"):
+        await interaction.response.send_message(response_message)
+    else:
+        await interaction.response.send_message(f"```{response_message}```")
 
 @bot.tree.command(name="delete", description="Delete an item")
 @app_commands.describe(sku="Item Sku")
@@ -371,6 +399,16 @@ async def add_item(interaction: discord.Interaction, item_name: str, priority: s
                               vendor_2, link_2, vendor_3, link_3, vendor_4, link_4, vendor_5, link_5,)
 
     await interaction.response.send_message(response_message)
+
+@bot.tree.command(name="search", description="Search inventory by item name")
+@app_commands.describe(name="Item name")
+async def search(interaction: discord.Interaction, name: str):
+    response_message = await command_handler.handler_search(name)
+
+    if response_message.startswith("No items found"):
+        await interaction.response.send_message(response_message)
+    else:
+        await interaction.response.send_message(f"```{response_message}```")
 
 @bot.event
 async def setup_hook():
