@@ -41,6 +41,7 @@ class DB_Commands:
             "TRACKING_MODE": tracking_mode,
             "QUANTITY_ON_HAND": quantity_on_hand,
             "LOW_THRESHOLD": low_threshold,
+            "LOW_THREAD_ID": None,
             "UNIT": unit,
             "DECREASE_AMOUNT": decrease_amount,
             "LINK_1": link_1,
@@ -88,7 +89,7 @@ class DB_Commands:
         
         return response_message
     
-    async def handler_resolve(self, sku):
+    async def handler_resolve(self, sku, archive_thread=False):
         global inventory
 
         sku = await clean_sku(sku)
@@ -99,6 +100,9 @@ class DB_Commands:
                 inventory.update_item(sku, {"LOW": "FALSE"})
                 inventory.save()
                 response_message = f"{sku} no longer marked as low"
+                if archive_thread:
+                    thread_message = await self.archive_low_thread(sku)
+                    response_message += f"\n{thread_message}"
             else:
                 response_message = f"{sku} not marked as low"
         else:
@@ -120,6 +124,9 @@ class DB_Commands:
                     content=make_low_thread_content(item),
                 )
                 thread_name = thread_with_message.thread.name
+
+                inventory.update_item(sku, {"LOW_THREAD_ID": thread_with_message.thread.id,},)
+                inventory.save()
 
             if item["TRACKING_MODE"] == "KANBAN":
                 if result["low_changed"]:
@@ -194,6 +201,9 @@ class DB_Commands:
                 )
                 thread_name = thread_with_message.thread.name
 
+                inventory.update_item(sku, {"LOW_THREAD_ID": thread_with_message.thread.id,},)
+                inventory.save()
+
             if item["TRACKING_MODE"] == "KANBAN":
                 if result["low_changed"]:
                     return f"{sku} marked as low, thread: {thread_name} created"
@@ -237,6 +247,44 @@ class DB_Commands:
             response_message = f"Invalid sku: {sku}"
 
         return response_message
+    
+    async def archive_low_thread(self, sku):
+        global inventory
+        global bot
+
+        item = inventory.get_item(sku)
+
+        if item is None:
+            return "No item found."
+
+        thread_id = item.get("LOW_THREAD_ID")
+
+        if not thread_id:
+            return "No low-stock thread was stored for this item."
+
+        try:
+            thread = bot.get_channel(int(thread_id))
+
+            if thread is None:
+                thread = await bot.fetch_channel(int(thread_id))
+
+        except discord.NotFound:
+            inventory.update_item(sku, {"LOW_THREAD_ID": None})
+            inventory.save()
+            return "Stored thread no longer exists."
+
+        if not isinstance(thread, discord.Thread):
+            return "Stored channel is not a thread."
+
+        await thread.edit(
+            archived=True,
+            reason=f"{sku} resolved",
+        )
+
+        inventory.update_item(sku, {"LOW_THREAD_ID": None})
+        inventory.save()
+
+        return "Low-stock thread archived."
 
 async def clean_sku(sku):
     if len(sku) <= 6:
@@ -501,11 +549,14 @@ async def resolve(interaction: discord.Interaction, sku: str | None = None):
             ephemeral=True,
         )
         return
-    elif isinstance(channel, discord.Thread):
+    elif isinstance(channel, discord.Thread) and sku == None:
         sku = channel.name.split(": ")[1]
     
-    response_message = await command_handler.handler_resolve(sku)
+    response_message = await command_handler.handler_resolve(sku, False)
     await interaction.response.send_message(response_message)
+
+    cleaned_sku = await clean_sku(sku)
+    await command_handler.archive_low_thread(cleaned_sku)
 
 @bot.tree.command(name="low", description="Mark stock as being low")
 @app_commands.describe(sku="Item Sku")

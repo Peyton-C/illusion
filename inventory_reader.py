@@ -15,7 +15,7 @@ class SpreadsheetManager:
         self.sku_header = "SKU"
         self.sku_padding = 6
 
-        self.default_headers = ["SKU", "NAME", "PRIORITY", "ORDER_QUANTITY", "LOW", 
+        self.default_headers = ["SKU", "NAME", "PRIORITY", "ORDER_QUANTITY", "LOW", "LOW_THREAD_ID",
                                 "TRACKING_MODE", "QUANTITY_ON_HAND", "LOW_THRESHOLD", "UNIT", "DECREASE_AMOUNT",
                                 "LINK_1", "VENDOR_1", "LINK_2", "VENDOR_2", "LINK_3", "VENDOR_3",
                                 "LINK_4", "VENDOR_4", "LINK_5","VENDOR_5",
@@ -42,7 +42,17 @@ class SpreadsheetManager:
             self.connection.execute("PRAGMA journal_mode = WAL")
             self.connection.execute("PRAGMA synchronous = NORMAL")
             self.connection.execute("PRAGMA busy_timeout = 5000")
+    def _migrate_items_table(self) -> None:
+        existing_columns = {
+            row["name"]
+            for row in self.connection.execute("PRAGMA table_info(items)").fetchall()
+        }
 
+        if "low_thread_id" not in existing_columns:
+            self.connection.execute(
+                "ALTER TABLE items ADD COLUMN low_thread_id INTEGER"
+            )
+            
     def _create_tables(self) -> None:
         with self.lock:
             self.connection.executescript(
@@ -52,6 +62,7 @@ class SpreadsheetManager:
                     name TEXT NOT NULL,
                     priority TEXT,
                     order_quantity TEXT,
+                    low_thread_id INTEGER,
                     low INTEGER NOT NULL DEFAULT 0,
 
                     tracking_mode TEXT NOT NULL DEFAULT 'KANBAN',
@@ -108,7 +119,7 @@ class SpreadsheetManager:
                 END;
                 """
             )
-
+            self._migrate_items_table()
             self.connection.commit()
 
     def _get_headers(self) -> list[str]:
@@ -197,6 +208,7 @@ class SpreadsheetManager:
             "LOW_THRESHOLD": row["low_threshold"],
             "UNIT": row["unit"],
             "DECREASE_AMOUNT": row["decrease_amount"],
+            "LOW_THREAD_ID": row["low_thread_id"],
         }
 
         for vendor_number in range(1, 6):
@@ -247,7 +259,7 @@ class SpreadsheetManager:
         with self.lock:
             rows = self.connection.execute(
                 """
-                SELECT sku, name, priority, order_quantity, low, tracking_mode, quantity_on_hand, low_threshold, unit, decrease_amount
+                SELECT sku, name, priority, order_quantity, low, tracking_mode, quantity_on_hand, low_threshold, unit, decrease_amount, low_thread_id
                 FROM items
                 ORDER BY sku
                 """
@@ -262,7 +274,7 @@ class SpreadsheetManager:
         with self.lock:
             row = self.connection.execute(
                 """
-                SELECT sku, name, priority, order_quantity, low, tracking_mode, quantity_on_hand, low_threshold, unit, decrease_amount
+                SELECT sku, name, priority, order_quantity, low, tracking_mode, quantity_on_hand, low_threshold, unit, decrease_amount, low_thread_id
                 FROM items
                 WHERE sku = ?
                 """,
@@ -370,7 +382,7 @@ class SpreadsheetManager:
                 if header not in self.default_headers:
                     raise ValueError(f"Header '{header}' does not exist.")
 
-                if header in {"NAME", "PRIORITY", "ORDER_QUANTITY", "LOW", "TRACKING_MODE", "QUANTITY_ON_HAND", "LOW_THRESHOLD", "UNIT","DECREASE_AMOUNT"}:
+                if header in {"NAME", "PRIORITY", "ORDER_QUANTITY", "LOW", "TRACKING_MODE", "QUANTITY_ON_HAND", "LOW_THRESHOLD", "UNIT", "DECREASE_AMOUNT", "LOW_THREAD_ID"}:
                     item_updates[header] = value
                     continue
 
@@ -394,6 +406,7 @@ class SpreadsheetManager:
                     "LOW_THRESHOLD": "low_threshold",
                     "UNIT": "unit",
                     "DECREASE_AMOUNT": "decrease_amount",
+                    "LOW_THREAD_ID": "low_thread_id",
                 }
 
 
@@ -524,7 +537,8 @@ class SpreadsheetManager:
                     quantity_on_hand,
                     low_threshold,
                     unit,
-                    decrease_amount
+                    decrease_amount,
+                    low_thread_id
                 FROM items
                 WHERE sku = ?
                 """,
@@ -698,7 +712,7 @@ class SpreadsheetManager:
         with self.lock:
             rows = self.connection.execute(
                 """
-                SELECT sku, name, priority, order_quantity, low, tracking_mode, quantity_on_hand, low_threshold, unit, decrease_amount
+                SELECT sku, name, priority, order_quantity, low, tracking_mode, quantity_on_hand, low_threshold, unit, decrease_amount, low_thread_id
                 FROM items
                 WHERE LOWER(name) LIKE LOWER(?) ESCAPE '\\'
                 ORDER BY
