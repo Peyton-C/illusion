@@ -1,11 +1,13 @@
+from __future__ import annotations
+
+import sqlite3
+import threading
 from pathlib import Path
 from typing import Any
 
-from openpyxl import Workbook, load_workbook
-
 
 class SpreadsheetManager:
-    def __init__(self, file_path: str, sheet_name: str = "Inventory", sku_prefix: str = "SKU",):
+    def __init__(self, file_path: str, sheet_name: str = "Inventory", sku_prefix: str = "SKU"):
         self.file_path = Path(file_path)
         self.sheet_name = sheet_name
         self.sku_prefix = sku_prefix
@@ -13,189 +15,453 @@ class SpreadsheetManager:
         self.sku_header = "SKU"
         self.sku_padding = 6
 
-        self.default_headers = ["SKU", "NAME", "PRIORITY", "ORDER_QUANTITY", "LOW", "LINK_1", "VENDOR_1", "LINK_2", "VENDOR_2", "LINK_3", "VENDOR_3", "LINK_4", "VENDOR_4", "LINK_5", "VENDOR_5",]
+        self.default_headers = ["SKU", "NAME", "PRIORITY", "ORDER_QUANTITY", "LOW", 
+                                "LINK_1", "VENDOR_1", "LINK_2", "VENDOR_2", "LINK_3", "VENDOR_3",
+                                "LINK_4", "VENDOR_4", "LINK_5","VENDOR_5",
+        ]
 
-        if self.file_path.exists():
-            self.workbook = load_workbook(self.file_path)
-        else:
-            self.workbook = Workbook()
+        self.item_fields = {"SKU", "NAME", "PRIORITY", "ORDER_QUANTITY", "LOW",}
 
-        if self.sheet_name in self.workbook.sheetnames:
-            self.sheet = self.workbook[self.sheet_name]
-        else:
-            self.sheet = self.workbook.create_sheet(self.sheet_name)
-        
-        # Validate Headers
-        existing_headers = self._get_headers()
+        self.lock = threading.RLock()
 
-        if not existing_headers:
-            for column_index, header in enumerate(self.default_headers, start=1):
-                self.sheet.cell(row=1, column=column_index).value = header
-            return
+        self.file_path.parent.mkdir(parents=True, exist_ok=True)
 
-        for header in self.default_headers:
-            if header not in existing_headers:
-                next_column = self.sheet.max_column + 1
-                self.sheet.cell(row=1, column=next_column).value = header
-                existing_headers.append(header)
+        self.connection = sqlite3.connect(
+            self.file_path,
+            check_same_thread=False,
+        )
+        self.connection.row_factory = sqlite3.Row
+
+        self._configure_database()
+        self._create_tables()
+
+    def _configure_database(self) -> None:
+        with self.lock:
+            self.connection.execute("PRAGMA foreign_keys = ON")
+            self.connection.execute("PRAGMA journal_mode = WAL")
+            self.connection.execute("PRAGMA synchronous = NORMAL")
+            self.connection.execute("PRAGMA busy_timeout = 5000")
+
+    def _create_tables(self) -> None:
+        with self.lock:
+            self.connection.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS items (
+                    sku TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    priority TEXT,
+                    order_quantity TEXT,
+                    low INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS vendors (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    sku TEXT NOT NULL,
+                    vendor_number INTEGER NOT NULL,
+                    vendor_name TEXT,
+                    link TEXT,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+                    FOREIGN KEY (sku)
+                        REFERENCES items (sku)
+                        ON DELETE CASCADE,
+
+                    UNIQUE (sku, vendor_number),
+
+                    CHECK (
+                        vendor_number >= 1
+                        AND vendor_number <= 5
+                    )
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_vendors_sku
+                    ON vendors (sku);
+
+                CREATE TRIGGER IF NOT EXISTS trg_items_updated_at
+                AFTER UPDATE ON items
+                FOR EACH ROW
+                BEGIN
+                    UPDATE items
+                    SET updated_at = CURRENT_TIMESTAMP
+                    WHERE sku = OLD.sku;
+                END;
+                """
+            )
+            self.connection.commit()
 
     def _get_headers(self) -> list[str]:
-        headers = []
+        return list(self.default_headers)
 
-        for column in range(1, self.sheet.max_column + 1):
-            value = self.sheet.cell(row=1, column=column).value
+    def _normalize_bool(self, value: Any) -> int:
+        if isinstance(value, bool):
+            return int(value)
 
-            if value is not None:
-                headers.append(str(value))
+        if value is None:
+            return 0
 
-        return headers
-    
-    def _get_column_index(self, header_name: str):
-        headers = self._get_headers()
+        if isinstance(value, int):
+            return int(value != 0)
 
-        if header_name not in headers:
-            raise ValueError(f"Header '{header_name}' does not exist.")
+        value_string = str(value).strip().lower()
 
-        return headers.index(header_name) + 1
-    
-    def _row_to_dict(self, row_number: int):
-        headers = self._get_headers()
-        item = {}
+        if value_string in {"true", "yes", "y", "1"}:
+            return 1
 
-        for column_index, header in enumerate(headers, start=1):
-            value = self.sheet.cell(row=row_number, column=column_index,).value
-            
-            if header == "LOW":
-                if value == "TRUE":
-                    item[header] = True
-                else:
-                    item[header] = False
-            else:
-                item[header] = value
+        return 0
+
+    def _bool_to_python(self, value: Any) -> bool:
+        return bool(value)
+
+    def _generate_sku(self) -> str:
+        with self.lock:
+            rows = self.connection.execute(
+                """
+                SELECT sku
+                FROM items
+                WHERE sku LIKE ?
+                """,
+                (f"{self.sku_prefix}-%",),
+            ).fetchall()
+
+            highest_number = 0
+
+            for row in rows:
+                sku = str(row["sku"])
+
+                if not sku.startswith(f"{self.sku_prefix}-"):
+                    continue
+
+                number_part = sku.replace(f"{self.sku_prefix}-", "", 1)
+
+                if number_part.isdigit():
+                    highest_number = max(highest_number, int(number_part))
+
+            next_number = highest_number + 1
+            return f"{self.sku_prefix}-{next_number:0{self.sku_padding}d}"
+
+    def _row_to_dict(self, row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+        item = {
+            "SKU": row["sku"],
+            "NAME": row["name"],
+            "PRIORITY": row["priority"],
+            "ORDER_QUANTITY": row["order_quantity"],
+            "LOW": self._bool_to_python(row["low"]),
+        }
+
+        for vendor_number in range(1, 6):
+            item[f"LINK_{vendor_number}"] = None
+            item[f"VENDOR_{vendor_number}"] = None
+
+        vendor_rows = self.connection.execute(
+            """
+            SELECT vendor_number, vendor_name, link
+            FROM vendors
+            WHERE sku = ?
+            ORDER BY vendor_number
+            """,
+            (row["sku"],),
+        ).fetchall()
+
+        for vendor_row in vendor_rows:
+            vendor_number = vendor_row["vendor_number"]
+            item[f"VENDOR_{vendor_number}"] = vendor_row["vendor_name"]
+            item[f"LINK_{vendor_number}"] = vendor_row["link"]
 
         return item
 
-    def _find_row_by_sku(self, sku: str):
-        sku_column = self._get_column_index(self.sku_header)
+    def _find_row_by_sku(self, sku: str) -> str | None:
+        with self.lock:
+            row = self.connection.execute(
+                """
+                SELECT sku
+                FROM items
+                WHERE sku = ?
+                """,
+                (sku,),
+            ).fetchone()
 
-        for row_number in range(2, self.sheet.max_row + 1):
-            cell_value = self.sheet.cell(
-                row=row_number,
-                column=sku_column,
-            ).value
+            if row is None:
+                return None
 
-            if str(cell_value) == str(sku):
-                return row_number
-
-        return None
-
-    def _generate_sku(self) -> str:
-        sku_column = self._get_column_index(self.sku_header)
-        highest_number = 0
-
-        for row_number in range(2, self.sheet.max_row + 1):
-            sku = self.sheet.cell(row=row_number, column=sku_column).value
-
-            if not sku:
-                continue
-
-            sku = str(sku)
-
-            if not sku.startswith(f"{self.sku_prefix}-"):
-                continue
-
-            number_part = sku.replace(f"{self.sku_prefix}-", "", 1)
-
-            if number_part.isdigit():
-                highest_number = max(highest_number, int(number_part))
-
-        next_number = highest_number + 1
-        return f"{self.sku_prefix}-{next_number:0{self.sku_padding}d}"
+            return str(row["sku"])
 
     def read_all(self) -> list[dict[str, Any]]:
-        items = []
+        with self.lock:
+            rows = self.connection.execute(
+                """
+                SELECT sku, name, priority, order_quantity, low
+                FROM items
+                ORDER BY sku
+                """
+            ).fetchall()
 
-        for row_number in range(2, self.sheet.max_row + 1):
-            item = self._row_to_dict(row_number)
+            return [self._row_to_dict(row) for row in rows]
 
-            if any(value is not None for value in item.values()):
-                items.append(item)
+    def validate_sku(self, sku: str) -> bool:
+        return self._find_row_by_sku(sku) is not None
 
-        return items
-    
-    def validate_sku(self, sku: str):
-        if self._find_row_by_sku(sku) != None:
+    def get_item(self, sku: str) -> dict[str, Any] | None:
+        with self.lock:
+            row = self.connection.execute(
+                """
+                SELECT sku, name, priority, order_quantity, low
+                FROM items
+                WHERE sku = ?
+                """,
+                (sku,),
+            ).fetchone()
+
+            if row is None:
+                return None
+
+            return self._row_to_dict(row)
+
+    def add_item(self, item_data: dict[str, Any]) -> str:
+        with self.lock:
+            new_sku = self._generate_sku()
+
+            name = item_data.get("NAME")
+            priority = item_data.get("PRIORITY")
+            order_quantity = item_data.get("ORDER_QUANTITY")
+            low = self._normalize_bool(item_data.get("LOW"))
+
+            if not name:
+                raise ValueError("NAME is required.")
+
+            self.connection.execute(
+                """
+                INSERT INTO items (
+                    sku,
+                    name,
+                    priority,
+                    order_quantity,
+                    low
+                )
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    new_sku,
+                    name,
+                    priority,
+                    order_quantity,
+                    low,
+                ),
+            )
+
+            for vendor_number in range(1, 6):
+                vendor_name = item_data.get(f"VENDOR_{vendor_number}")
+                link = item_data.get(f"LINK_{vendor_number}")
+
+                if vendor_name or link:
+                    self.connection.execute(
+                        """
+                        INSERT INTO vendors (
+                            sku,
+                            vendor_number,
+                            vendor_name,
+                            link
+                        )
+                        VALUES (?, ?, ?, ?)
+                        """,
+                        (
+                            new_sku,
+                            vendor_number,
+                            vendor_name,
+                            link,
+                        ),
+                    )
+
+            self.connection.commit()
+            return new_sku
+
+    def update_item(self, sku: str, updates: dict[str, Any]) -> bool:
+        with self.lock:
+            if not self.validate_sku(sku):
+                return False
+
+            item_updates: dict[str, Any] = {}
+            vendor_updates: dict[int, dict[str, Any]] = {}
+
+            for header, value in updates.items():
+                if header == self.sku_header:
+                    continue
+
+                if header not in self.default_headers:
+                    raise ValueError(f"Header '{header}' does not exist.")
+
+                if header in {"NAME", "PRIORITY", "ORDER_QUANTITY", "LOW"}:
+                    item_updates[header] = value
+                    continue
+
+                if header.startswith("VENDOR_") or header.startswith("LINK_"):
+                    field_name, vendor_number_string = header.rsplit("_", 1)
+                    vendor_number = int(vendor_number_string)
+
+                    if vendor_number not in vendor_updates:
+                        vendor_updates[vendor_number] = {}
+
+                    vendor_updates[vendor_number][field_name] = value
+
+            if item_updates:
+                column_map = {
+                    "NAME": "name",
+                    "PRIORITY": "priority",
+                    "ORDER_QUANTITY": "order_quantity",
+                    "LOW": "low",
+                }
+
+                assignments = []
+                values = []
+
+                for header, value in item_updates.items():
+                    column = column_map[header]
+                    assignments.append(f"{column} = ?")
+
+                    if header == "LOW":
+                        values.append(self._normalize_bool(value))
+                    else:
+                        values.append(value)
+
+                values.append(sku)
+
+                self.connection.execute(
+                    f"""
+                    UPDATE items
+                    SET {", ".join(assignments)}
+                    WHERE sku = ?
+                    """,
+                    values,
+                )
+
+            for vendor_number, vendor_data in vendor_updates.items():
+                existing = self.connection.execute(
+                    """
+                    SELECT id
+                    FROM vendors
+                    WHERE sku = ?
+                    AND vendor_number = ?
+                    """,
+                    (sku, vendor_number),
+                ).fetchone()
+
+                current_vendor_name = None
+                current_link = None
+
+                if existing is not None:
+                    current = self.connection.execute(
+                        """
+                        SELECT vendor_name, link
+                        FROM vendors
+                        WHERE sku = ?
+                        AND vendor_number = ?
+                        """,
+                        (sku, vendor_number),
+                    ).fetchone()
+
+                    current_vendor_name = current["vendor_name"]
+                    current_link = current["link"]
+
+                vendor_name = vendor_data.get("VENDOR", current_vendor_name)
+                link = vendor_data.get("LINK", current_link)
+
+                if existing is None:
+                    self.connection.execute(
+                        """
+                        INSERT INTO vendors (
+                            sku,
+                            vendor_number,
+                            vendor_name,
+                            link
+                        )
+                        VALUES (?, ?, ?, ?)
+                        """,
+                        (
+                            sku,
+                            vendor_number,
+                            vendor_name,
+                            link,
+                        ),
+                    )
+                else:
+                    self.connection.execute(
+                        """
+                        UPDATE vendors
+                        SET vendor_name = ?,
+                            link = ?
+                        WHERE sku = ?
+                        AND vendor_number = ?
+                        """,
+                        (
+                            vendor_name,
+                            link,
+                            sku,
+                            vendor_number,
+                        ),
+                    )
+
+            self.connection.commit()
             return True
-        else:
+
+    def delete_item(self, sku: str) -> bool:
+        with self.lock:
+            cursor = self.connection.execute(
+                """
+                DELETE FROM items
+                WHERE sku = ?
+                """,
+                (sku,),
+            )
+
+            self.connection.commit()
+            return cursor.rowcount > 0
+
+    def add_vendor(self, sku: str, vendor_name: str, link: str,) -> bool:
+        with self.lock:
+            if not self.validate_sku(sku):
+                return False
+
+            used_vendor_numbers = {
+                row["vendor_number"]
+                for row in self.connection.execute(
+                    """
+                    SELECT vendor_number
+                    FROM vendors
+                    WHERE sku = ?
+                    """,
+                    (sku,),
+                ).fetchall()
+            }
+
+            for vendor_number in range(1, 6):
+                if vendor_number not in used_vendor_numbers:
+                    self.connection.execute(
+                        """
+                        INSERT INTO vendors (
+                            sku,
+                            vendor_number,
+                            vendor_name,
+                            link
+                        )
+                        VALUES (?, ?, ?, ?)
+                        """,
+                        (
+                            sku,
+                            vendor_number,
+                            vendor_name,
+                            link,
+                        ),
+                    )
+                    self.connection.commit()
+                    return True
+
             return False
 
-    def get_item(self, sku: str):
-        row_number = self._find_row_by_sku(sku)
+    def save(self) -> None:
+        with self.lock:
+            self.connection.commit()
 
-        if row_number is None:
-            return None
-
-        return self._row_to_dict(row_number)
-
-    def add_item(self, item_data: dict[str, Any]):
-        headers = self._get_headers()
-        new_sku = self._generate_sku()
-
-        item_data[self.sku_header] = new_sku
-
-        new_row = []
-
-        for header in headers:
-            new_row.append(item_data.get(header))
-
-        self.sheet.append(new_row)
-
-        return new_sku
-
-    def update_item(self, sku: str, updates: dict[str, Any]):
-        row_number = self._find_row_by_sku(sku)
-
-        if row_number is None:
-            return False
-
-        headers = self._get_headers()
-
-        for header, value in updates.items():
-            if header == self.sku_header:
-                continue
-
-            if header not in headers:
-                raise ValueError(f"Header '{header}' does not exist.")
-
-            column_index = headers.index(header) + 1
-            self.sheet.cell(row=row_number, column=column_index).value = value
-
-        return True
-
-    def delete_item(self, sku: str):
-        row_number = self._find_row_by_sku(sku)
-
-        if row_number is None:
-            return False
-
-        self.sheet.delete_rows(row_number)
-        return True
-    
-    def add_vendor(self, sku: str, vendor_name: str, link: str,):
-        item = self.get_item(sku)
-
-        if item is None:
-            return False
-
-        for vendor_number in range(1, 6):
-            vendor = item.get(f"VENDOR_{vendor_number}")
-            existing_link = item.get(f"LINK_{vendor_number}")
-
-            if not vendor and not existing_link:
-                self.update_item(sku, {f"VENDOR_{vendor_number}": vendor_name, f"LINK_{vendor_number}": link})
-                self.save()
-
-        return False
-
-    def save(self):
-        self.workbook.save(self.file_path)
+    def close(self) -> None:
+        with self.lock:
+            self.connection.close()

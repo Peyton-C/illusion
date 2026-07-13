@@ -220,3 +220,6 @@ __marimo__/
 
 inventory.xlsx
 .DS_Store
+inventory.db
+inventory.db-shm
+inventory.db-wal

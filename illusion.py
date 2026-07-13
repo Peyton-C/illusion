@@ -39,17 +39,18 @@ class DB_Commands:
             "ORDER_QUANTITY": quantity,
             "LINK_1": link_1,
             "VENDOR_1": vendor_1,
+            "LINK_2": link_2,
+            "VENDOR_2": vendor_2,
+            "LINK_3": link_3,
+            "VENDOR_3": vendor_3,
+            "LINK_4": link_4,
+            "VENDOR_4": vendor_4,
+            "LINK_5": link_5,
+            "VENDOR_5": vendor_5,
             "LOW": "FALSE"
         }
         
         new_sku = inventory.add_item(new_item)
-
-        vendors = [vendor_2, vendor_3, vendor_4, vendor_5]
-        links = [link_2, link_3, link_4, link_5]
-        
-        for i in range(len(vendors)):
-            if vendors[i] != None and links[i] != None:
-                inventory.add_vendor(new_sku, vendors[i], links[i])
 
         inventory.save()
 
@@ -236,111 +237,6 @@ async def make_table(data, exclude=None):
 
     return "\n".join([header, separator] + table_rows)
 
-async def make_hori_table(data, exclude=[""]):
-    missing = "N/A"
-
-    # Required to handle both single dict and multiple dict tables
-    if isinstance(data, dict):
-        rows = [data]
-    else:
-        rows = data
-        
-    columns = []
-    for row in rows:
-        for key in row:
-            if key not in columns and key not in exclude:
-                columns.append(key)
-
-    string_rows = []
-    for row in rows:
-        string_row = {}
-        for column in columns:
-            string_row[column] = str(row.get(column, missing))
-        string_rows.append(string_row)
-
-    column_widths = {}
-    for column in columns:
-        max_cell_width = max(len(row[column]) for row in string_rows)
-        column_widths[column] = max(len(column), max_cell_width)
-
-    header_cells = []
-    for column in columns:
-        header_cells.append(column.ljust(column_widths[column]))
-
-    header = "| " + " | ".join(header_cells) + " |"
-
-    separator_cells = []
-    for column in columns:
-        separator_cells.append("-" * column_widths[column])
-
-    separator = "| " + " | ".join(separator_cells) + " |"
-
-    table_rows = []
-    for row in string_rows:
-        cells = []
-        for column in columns:
-            cells.append(row[column].ljust(column_widths[column]))
-
-        table_rows.append("| " + " | ".join(cells) + " |")
-
-    return "\n".join([header, separator] + table_rows)
-
-async def make_vert_table(data, exclude=[""]):
-    missing = "N/A"
-    field_header = "Field"
-    value_header = "Value"
-
-    # Required to handle both single dict and multiple dicts
-    if isinstance(data, dict):
-        rows = [data]
-    else:
-        rows = data
-
-    fields = []
-    for row in rows:
-        for key in row:
-            if key not in fields and key not in exclude:
-                fields.append(key)
-
-    tables = []
-
-    for index, row in enumerate(rows, start=1):
-        table_data = []
-
-        for field in fields:
-            value = row.get(field, missing)
-            table_data.append((str(field), str(value)))
-
-        field_width = max(
-            len(field_header),
-            *(len(field) for field, _ in table_data),
-        )
-
-        value_width = max(
-            len(value_header),
-            *(len(value) for _, value in table_data),
-        )
-
-        header = (
-            f"| {field_header.ljust(field_width)} "
-            f"| {value_header.ljust(value_width)} |"
-        )
-
-        separator = f"| {'-' * field_width} | {'-' * value_width} |"
-
-        body = []
-        for field, value in table_data:
-            body.append(
-                f"| {field.ljust(field_width)} | {value.ljust(value_width)} |"
-            )
-
-        if len(rows) > 1:
-            tables.append(f"Record {index}\n" + "\n".join([header, separator] + body))
-        else:
-            tables.append("\n".join([header, separator] + body))
-
-    return "\n\n".join(tables)
-
 async def terminal_loop():
     await bot.wait_until_ready()
 
@@ -471,10 +367,9 @@ async def add_item(interaction: discord.Interaction, item_name: str, priority: s
                    vendor_3: str | None = None, link_3: str | None = None, vendor_4: str | None = None, 
                    link_4: str | None = None, vendor_5: str | None = None, link_5: str | None = None):
 
-    new_sku = await command_handler.handler_add_item(item_name, priority, quantity, vendor_1, link_1, 
+    response_message = await command_handler.handler_add_item(item_name, priority, quantity, vendor_1, link_1, 
                               vendor_2, link_2, vendor_3, link_3, vendor_4, link_4, vendor_5, link_5,)
 
-    response_message = f"Added {item_name} to inventory, SKU: {new_sku}"
     await interaction.response.send_message(response_message)
 
 @bot.event
@@ -488,5 +383,5 @@ TOKEN = config["illusion"]["discord"]["token"]
 GUILD_ID = config["illusion"]["discord"]["server_id"]
 FORUM_CHANNEL_ID = config["illusion"]["discord"]["fourm_id"] 
 command_handler = DB_Commands()
-inventory = SpreadsheetManager(config["illusion"]["spreadsheet_location"])
+inventory = SpreadsheetManager(config["illusion"]["database_location"])
 bot.run(TOKEN)

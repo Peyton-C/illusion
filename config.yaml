@@ -1,5 +1,5 @@
 illusion:
-  spreadsheet_location: "./inventory.xlsx"
+  database_location: "./inventory.db"
   discord:
     token: ""
     server_id: 
