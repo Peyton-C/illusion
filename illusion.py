@@ -52,41 +52,294 @@ class DB_Commands:
                 inventory.add_vendor(new_sku, vendors[i], links[i])
 
         inventory.save()
-        return new_sku
+
+        response_message = f"Added {item_name} to inventory, SKU: {new_sku}"
+        return response_message
+    
+    async def handler_delete_item(self, sku):
+        global inventory
+        sku = await clean_sku(sku)
+        if inventory.validate_sku(sku):
+            item = inventory.get_item(sku)
+            inventory.delete_item(sku)
+            inventory.save()
+            response_message = f"Removed {item["NAME"]} from inventory, SKU: {sku}"
+        else:
+            response_message = f"Invalid sku: {sku}"
+        
+        return response_message
+    
+    async def handler_info(self, sku):
+        global inventory
+
+        sku = await clean_sku(sku)
+        if inventory.validate_sku(sku):
+            item = inventory.get_item(sku)
+            response_message = await make_table(item)
+        else:
+            response_message = f"Invalid sku: {sku}"
+        
+        return response_message
     
     async def handler_resolve(self, sku):
         global inventory
-        
-        item = inventory.get_item(sku)
 
-        if item["LOW"] == True:
-            inventory.update_item(sku, {"LOW": "FALSE"})
-            inventory.save()
-            return True
+        sku = await clean_sku(sku)
+        if inventory.validate_sku(sku):
+            item = inventory.get_item(sku)
+
+            if item["LOW"] == True:
+                inventory.update_item(sku, {"LOW": "FALSE"})
+                inventory.save()
+                response_message = f"{sku} nolonger marked as low"
+            else:
+                response_message = f"{sku} not marked as low"
         else:
-            return False
+            response_message = f"Invalid sku: {sku}"
+        
+        return response_message
 
     async def handler_low(self, sku):
         global inventory
 
-        item = inventory.get_item(sku)
-        if item["LOW"] == False:
-            inventory.update_item(sku, {"LOW": "TRUE"})
-            inventory.save()
-            print(item)
-            thread_with_message = await channel.create_thread(
-                name=f"{item["NAME"]}: {item["SKU"]}",
-                content=f"We are getting low on: {item["NAME"]}\nPriority: {item["PRIORITY"]}\nOrder Quantity: {item["ORDER_QUANTITY"]}\n\nLinks:\n{item["VENDOR_1"]}: {item["LINK_1"]}",
-            )
+        sku = await clean_sku(sku)
+        if inventory.validate_sku(sku):
+            item = inventory.get_item(sku)
+            if item["LOW"] == False:
+                inventory.update_item(sku, {"LOW": "TRUE"})
+                inventory.save()
 
-            return True, thread_with_message
+                thread_with_message = await channel.create_thread(
+                    name=f"{item["NAME"]}: {item["SKU"]}",
+                    content=f"We are getting low on: {item["NAME"]}\nPriority: {item["PRIORITY"]}\nOrder Quantity: {item["ORDER_QUANTITY"]}\n\nLinks:\n{item["VENDOR_1"]}: {item["LINK_1"]}",
+                )
+
+                response_message = f"{sku} marked as low, therad: {thread_with_message.thread.name} created"
+            else:
+                response_message = f"{sku} already marked as low"
         else:
-            return False, None
+            response_message = f"Invalid sku: {sku}"
+        
+        return response_message
 
 async def clean_sku(sku):
     if len(sku) <= 6:
         sku = "SKU-" + ("0" * (6 - len(sku))) + sku
     return sku
+
+async def make_table(data, exclude=None):
+    missing = "N/A"
+
+    if exclude is None:
+        exclude = [""]
+
+    if isinstance(data, dict):
+        rows = [data]
+    else:
+        rows = data
+
+    if not rows:
+        return ""
+
+    # Vertical Table
+    if len(rows) == 1:
+        row = rows[0]
+
+        field_header = "Field"
+        value_header = "Value"
+
+        table_data = []
+
+        for field in row:
+            if field not in exclude:
+                value = row.get(field, missing)
+                table_data.append((str(field), str(value)))
+
+        if not table_data:
+            return ""
+
+        field_width = max(
+            len(field_header),
+            *(len(field) for field, _ in table_data),
+        )
+
+        value_width = max(
+            len(value_header),
+            *(len(value) for _, value in table_data),
+        )
+
+        header = (
+            f"| {field_header.ljust(field_width)} "
+            f"| {value_header.ljust(value_width)} |"
+        )
+
+        separator = f"| {'-' * field_width} | {'-' * value_width} |"
+
+        body = []
+        for field, value in table_data:
+            body.append(
+                f"| {field.ljust(field_width)} | {value.ljust(value_width)} |"
+            )
+
+        return "\n".join([header, separator] + body)
+
+    # Horizontal Table
+    columns = []
+
+    for row in rows:
+        for key in row:
+            if key not in columns and key not in exclude:
+                columns.append(key)
+
+    if not columns:
+        return ""
+
+    string_rows = []
+
+    for row in rows:
+        string_row = {}
+
+        for column in columns:
+            string_row[column] = str(row.get(column, missing))
+
+        string_rows.append(string_row)
+
+    column_widths = {}
+
+    for column in columns:
+        max_cell_width = max(len(row[column]) for row in string_rows)
+        column_widths[column] = max(len(column), max_cell_width)
+
+    header_cells = []
+
+    for column in columns:
+        header_cells.append(column.ljust(column_widths[column]))
+
+    header = "| " + " | ".join(header_cells) + " |"
+
+    separator_cells = []
+
+    for column in columns:
+        separator_cells.append("-" * column_widths[column])
+
+    separator = "| " + " | ".join(separator_cells) + " |"
+
+    table_rows = []
+
+    for row in string_rows:
+        cells = []
+
+        for column in columns:
+            cells.append(row[column].ljust(column_widths[column]))
+
+        table_rows.append("| " + " | ".join(cells) + " |")
+
+    return "\n".join([header, separator] + table_rows)
+
+async def make_hori_table(data, exclude=[""]):
+    missing = "N/A"
+
+    # Required to handle both single dict and multiple dict tables
+    if isinstance(data, dict):
+        rows = [data]
+    else:
+        rows = data
+        
+    columns = []
+    for row in rows:
+        for key in row:
+            if key not in columns and key not in exclude:
+                columns.append(key)
+
+    string_rows = []
+    for row in rows:
+        string_row = {}
+        for column in columns:
+            string_row[column] = str(row.get(column, missing))
+        string_rows.append(string_row)
+
+    column_widths = {}
+    for column in columns:
+        max_cell_width = max(len(row[column]) for row in string_rows)
+        column_widths[column] = max(len(column), max_cell_width)
+
+    header_cells = []
+    for column in columns:
+        header_cells.append(column.ljust(column_widths[column]))
+
+    header = "| " + " | ".join(header_cells) + " |"
+
+    separator_cells = []
+    for column in columns:
+        separator_cells.append("-" * column_widths[column])
+
+    separator = "| " + " | ".join(separator_cells) + " |"
+
+    table_rows = []
+    for row in string_rows:
+        cells = []
+        for column in columns:
+            cells.append(row[column].ljust(column_widths[column]))
+
+        table_rows.append("| " + " | ".join(cells) + " |")
+
+    return "\n".join([header, separator] + table_rows)
+
+async def make_vert_table(data, exclude=[""]):
+    missing = "N/A"
+    field_header = "Field"
+    value_header = "Value"
+
+    # Required to handle both single dict and multiple dicts
+    if isinstance(data, dict):
+        rows = [data]
+    else:
+        rows = data
+
+    fields = []
+    for row in rows:
+        for key in row:
+            if key not in fields and key not in exclude:
+                fields.append(key)
+
+    tables = []
+
+    for index, row in enumerate(rows, start=1):
+        table_data = []
+
+        for field in fields:
+            value = row.get(field, missing)
+            table_data.append((str(field), str(value)))
+
+        field_width = max(
+            len(field_header),
+            *(len(field) for field, _ in table_data),
+        )
+
+        value_width = max(
+            len(value_header),
+            *(len(value) for _, value in table_data),
+        )
+
+        header = (
+            f"| {field_header.ljust(field_width)} "
+            f"| {value_header.ljust(value_width)} |"
+        )
+
+        separator = f"| {'-' * field_width} | {'-' * value_width} |"
+
+        body = []
+        for field, value in table_data:
+            body.append(
+                f"| {field.ljust(field_width)} | {value.ljust(value_width)} |"
+            )
+
+        if len(rows) > 1:
+            tables.append(f"Record {index}\n" + "\n".join([header, separator] + body))
+        else:
+            tables.append("\n".join([header, separator] + body))
+
+    return "\n\n".join(tables)
 
 async def terminal_loop():
     await bot.wait_until_ready()
@@ -123,23 +376,16 @@ async def terminal_loop():
                     print(f"{hat_lines[i].ljust(hat_width + gap)}")
         
         if len(parts) == 2 and len(parts[1]) >= 1:
-            sku = await clean_sku(parts[1])
-
-            if inventory.validate_sku(sku):
+                sku = parts[1]
                 if command == "low":
-                    successful, thread_name = await command_handler.handler_low(sku)
-                    if successful:
-                        print(f"{sku} marked as low")
-                        print(f"Created forum post: {thread_name.thread.name}")
-                    else:
-                        print(f"{sku} already marked as low")
+                    response_message = await command_handler.handler_low(sku)
                 elif command == "resolve":
-                    if await command_handler.handler_resolve(sku):
-                        print(f"{sku} resolved")
-                    else:
-                        print(f"{sku} not marked as low")
-            else:
-                print("Invalid sku")
+                    response_message = await command_handler.handler_resolve(sku)
+                elif command == "delete":
+                    response_message = await command_handler.handler_delete_item(sku)
+                elif command == "info":
+                    response_message = await command_handler.handler_info(sku)
+                print(response_message)
 
 
 @bot.event
@@ -172,7 +418,6 @@ async def ping(interaction: discord.Interaction):
 
 @bot.tree.command(name="about", description="About illusion")
 async def about(interaction: discord.Interaction):
-    latency = round(bot.latency * 1000)
     await interaction.response.send_message(f"illusion\nversion: {illusion_version}")
 
 @bot.tree.command(name="resolve", description="Mark low stock warnings as resolved")
@@ -186,23 +431,29 @@ async def resolve(interaction: discord.Interaction, sku: str | None = None):
             ephemeral=True,
         )
         return
-    if isinstance(channel, discord.Thread):
+    elif isinstance(channel, discord.Thread):
         sku = channel.name.split(": ")[1]
-    else:
-        sku = await clean_sku(sku)
     
-    await command_handler.handler_resolve(sku)
-    await interaction.response.send_message(f"Resolved: {sku}")
+    response_message = await command_handler.handler_resolve(sku)
+    await interaction.response.send_message(response_message)
 
 @bot.tree.command(name="low", description="Mark stock as being low")
 @app_commands.describe(sku="Item Sku")
 async def low(interaction: discord.Interaction, sku: str):
-    sku = await clean_sku(sku)
-    success, thread_name = await command_handler.handler_low(sku)
-    if success:
-        await interaction.response.send_message(f"{sku} marked as low, therad: {thread_name.thread.name} created")
-    else:
-        await interaction.response.send_message(f"{sku} already marked as low")
+    response_message = await command_handler.handler_low(sku)
+    await interaction.response.send_message(response_message)
+
+@bot.tree.command(name="info", description="Get info about an item")
+@app_commands.describe(sku="Item Sku")
+async def info(interaction: discord.Interaction, sku: str):
+    response_message = await command_handler.handler_info(sku)
+    await interaction.response.send_message(f"```{response_message}```")
+
+@bot.tree.command(name="delete", description="Delete an item")
+@app_commands.describe(sku="Item Sku")
+async def delete(interaction: discord.Interaction, sku: str):
+    response_message = await command_handler.handler_delete_item(sku)
+    await interaction.response.send_message(response_message)
 
 @bot.tree.command(name="add_item", description="Add item to inventory")
 @app_commands.describe(item_name="Item Name",
@@ -224,8 +475,6 @@ async def add_item(interaction: discord.Interaction, item_name: str, priority: s
                               vendor_2, link_2, vendor_3, link_3, vendor_4, link_4, vendor_5, link_5,)
 
     response_message = f"Added {item_name} to inventory, SKU: {new_sku}"
-    if config["illusion"]["terminal"]["log_to_term"] == True:
-        print(f"{response_message}\n>")
     await interaction.response.send_message(response_message)
 
 @bot.event
