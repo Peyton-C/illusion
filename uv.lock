@@ -195,7 +195,7 @@ wheels = [
 
 [[package]]
 name = "illusion"
-version = "0.3.2"
+version = "0.3.3"
 source = { virtual = "." }
 dependencies = [
     { name = "discord-py" },

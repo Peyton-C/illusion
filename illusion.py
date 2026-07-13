@@ -84,7 +84,7 @@ class DB_Commands:
         sku = await clean_sku(sku)
         if inventory.validate_sku(sku):
             item = inventory.get_item(sku)
-            response_message = await make_table(item, ["PRIORITY", "TRACKING_MODE", "LOW_THRESHOLD", "UNIT", "DECREASE_AMOUNT"])
+            response_message = await make_table(item, ["PRIORITY", "TRACKING_MODE", "LOW_THRESHOLD", "UNIT", "LOW_THREAD_ID", "DECREASE_AMOUNT"])
         else:
             response_message = f"Invalid sku: {sku}"
         
@@ -225,6 +225,26 @@ class DB_Commands:
                 response_message += f"\nLow threshold reached, thread: {thread_name} created"
             elif item["LOW"]:
                 response_message += "\nItem is already marked as low."
+        else:
+            response_message = f"Invalid sku: {sku}"
+
+        return response_message
+    
+    async def handler_increase(self, sku, amount=1):
+        global inventory
+
+        sku = await clean_sku(sku)
+
+        if inventory.validate_sku(sku):
+            item = inventory.increase_item(sku, float(amount))
+
+            unit = item["UNIT"] or "units"
+
+            response_message = (
+                f"{sku} increased by {format_quantity(amount)} {unit}. "
+                f"New stock: {format_quantity(item['QUANTITY_ON_HAND'])} {unit}. "
+                f"Low: {item['LOW']}"
+            )
         else:
             response_message = f"Invalid sku: {sku}"
 
@@ -504,10 +524,16 @@ async def terminal_loop():
                     response_message = await command_handler.handler_search(parts[1])
                 elif command == "decrease":
                     response_message = await command_handler.handler_decrease(parts[1])
+                elif command == "increase":
+                    response_message = await command_handler.handler_increase(parts[1])
                 print(response_message)
         elif len(parts) == 3 and len(parts[1]) >= 1:
             if command == "set":
                 response_message = await command_handler.handler_set_stock(parts[1], parts[2])
+            elif command == "decrease":
+                response_message = await command_handler.handler_decrease(parts[1], parts[2])
+            elif command == "increase":
+                response_message = await command_handler.handler_increase(parts[1], parts[2])
             print(response_message)
 
 
@@ -576,9 +602,15 @@ async def set_stock(interaction: discord.Interaction, sku: str, value: str):
     await interaction.response.send_message(response_message)
 
 @bot.tree.command(name="decrease", description="Decrease current stock")
-@app_commands.describe(sku="Item Sku")
-async def decrease(interaction: discord.Interaction, sku: str):
-    response_message = await command_handler.handler_decrease(sku)
+@app_commands.describe(sku="Item Sku", amount="Amount to decrease by")
+async def decrease(interaction: discord.Interaction, sku: str, amount: str | None = "1"):
+    response_message = await command_handler.handler_decrease(sku, amount)
+    await interaction.response.send_message(response_message)
+
+@bot.tree.command(name="increase", description="Increase current stock")
+@app_commands.describe(sku="Item Sku", amount="Amount to increase by")
+async def increase(interaction: discord.Interaction, sku: str, amount: str | None = "1"):
+    response_message = await command_handler.handler_increase(sku, amount)
     await interaction.response.send_message(response_message)
 
 @bot.tree.command(name="info", description="Get info about an item")
@@ -665,15 +697,17 @@ async def add_hybrid(interaction: discord.Interaction, item_name: str, priority:
 
     await interaction.response.send_message(response_message)
 
+# Something about search makes discord hate it, no clue why -PC
 @bot.tree.command(name="search", description="Search inventory by item name")
 @app_commands.describe(name="Item name")
 async def search(interaction: discord.Interaction, name: str):
+    await interaction.response.defer() #
     response_message = await command_handler.handler_search(name)
 
     if response_message.startswith("No items found"):
-        await interaction.response.send_message(response_message)
+        await interaction.followup.send(response_message)
     else:
-        await interaction.response.send_message(f"```{response_message}```")
+        await interaction.followup.send(f"```{response_message}```")
 
 @bot.tree.command(name="generate_barcode", description="Generate a barcode")
 @app_commands.describe(sku="Item Sku")

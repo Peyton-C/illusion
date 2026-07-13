@@ -656,6 +656,27 @@ class SpreadsheetManager:
             self.connection.commit()
 
             return self.get_item(sku)
+    
+    def increase_item(self, sku: str, amount: float) -> dict[str, Any] | None:
+        with self.lock:
+            item = self.get_item(sku)
+
+            if item is None:
+                return None
+
+            amount = float(amount)
+
+            if amount <= 0:
+                raise ValueError("Increase amount must be greater than 0.")
+
+            current_quantity = self._normalize_float(
+                item["QUANTITY_ON_HAND"],
+                0.0,
+            )
+
+            new_quantity = current_quantity + amount
+
+            return self.set_stock(sku, new_quantity)
 
     def add_vendor(self, sku: str, vendor_name: str, link: str,) -> bool:
         with self.lock:
