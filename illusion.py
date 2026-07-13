@@ -434,6 +434,10 @@ async def terminal_loop():
                         print(f"{hat_lines[i].ljust(hat_width + gap)}{text_lines[i]}")
                     else:
                         print(f"{hat_lines[i].ljust(hat_width + gap)}")
+            
+            elif parts[0].startswith("SKU-"): # Basic bar code scanner support
+                response_message = await command_handler.handler_decrease(parts[0])
+                print(response_message)
         elif len(parts) == 2 and len(parts[1]) >= 1:
                 if command == "low":
                     response_message = await command_handler.handler_low(parts[1])
