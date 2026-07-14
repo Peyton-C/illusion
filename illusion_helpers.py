@@ -10,11 +10,6 @@ def format_quantity(value):
 
 
 def make_low_thread_content(item):
-
-
-
-
-
     stock_lines = []
 
     if item["TRACKING_MODE"] != "KANBAN":

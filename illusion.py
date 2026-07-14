@@ -241,6 +241,7 @@ class DB_Commands:
 
         if inventory.validate_sku(sku):
             item = inventory.increase_item(sku, float(amount))
+            inventory.save()
 
             unit = item["UNIT"] or "units"
 
@@ -261,12 +262,13 @@ class DB_Commands:
 
         if inventory.validate_sku(sku):
             item = inventory.set_stock(sku, float(quantity))
+            inventory.save()
 
             unit = item["UNIT"] or "units"
 
             response_message = (
                 f"{sku} stock set to "
-                f"{format_quantity(item['QUANTITY_ON_HAND'])} {unit}. "
+                f"{illusion_helpers.format_quantity(item['QUANTITY_ON_HAND'])} {unit}. "
                 f"Low: {item['LOW']}"
             )
         else:
@@ -557,6 +559,11 @@ async def set_stock(interaction: discord.Interaction, sku: str, value: str):
     response_message = await command_handler.handler_set_stock(sku, value)
     await interaction.response.send_message(response_message)
 
+    cleaned_sku = await clean_sku(sku)
+    item = inventory.get_item(cleaned_sku)
+    if item["LOW"] == False and item["LOW_THREAD_ID"] != None:
+        await command_handler.archive_low_thread(cleaned_sku)
+
 @bot.tree.command(name="decrease", description="Decrease current stock")
 @app_commands.describe(sku="Item Sku", amount="Amount to decrease by")
 async def decrease(interaction: discord.Interaction, sku: str, amount: str | None = "1"):
@@ -568,6 +575,11 @@ async def decrease(interaction: discord.Interaction, sku: str, amount: str | Non
 async def increase(interaction: discord.Interaction, sku: str, amount: str | None = "1"):
     response_message = await command_handler.handler_increase(sku, amount)
     await interaction.response.send_message(response_message)
+
+    cleaned_sku = await clean_sku(sku)
+    item = inventory.get_item(cleaned_sku)
+    if item["LOW"] == False and item["LOW_THREAD_ID"] != None:
+        await command_handler.archive_low_thread(sku)
 
 @bot.tree.command(name="info", description="Get info about an item")
 @app_commands.describe(sku="Item Sku")
