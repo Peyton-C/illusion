@@ -7,6 +7,7 @@ import yaml
 import tomllib
 from pathlib import Path
 import barcode_generator
+import illusion_helpers
 
 pyproject_path = Path(__file__).resolve().parents[0] / "./pyproject.toml"
 
@@ -84,7 +85,8 @@ class DB_Commands:
         sku = await clean_sku(sku)
         if inventory.validate_sku(sku):
             item = inventory.get_item(sku)
-            response_message = await make_table(item, ["PRIORITY", "TRACKING_MODE", "LOW_THRESHOLD", "UNIT", "LOW_THREAD_ID", "DECREASE_AMOUNT"])
+            response_message = await make_table(item, ["PRIORITY", "TRACKING_MODE", "LOW_THRESHOLD", "UNIT", "LOW_THREAD_ID", "DECREASE_AMOUNT", 
+                                                       "VENDOR_1", "LINK_1", "VENDOR_2", "LINK_2", "VENDOR_3", "LINK_3", "VENDOR_4", "LINK_4", "VENDOR_5", "LINK_5"])
         else:
             response_message = f"Invalid sku: {sku}"
         
@@ -122,7 +124,8 @@ class DB_Commands:
             if result["low_changed"]:
                 thread_with_message = await channel.create_thread(
                     name=f"{item['NAME']}: {item['SKU']}",
-                    content=make_low_thread_content(item),
+                    content=illusion_helpers.make_low_thread_content(item),
+                    view=illusion_helpers.make_vendor_buttons(item),
                 )
                 thread_name = thread_with_message.thread.name
 
@@ -139,9 +142,9 @@ class DB_Commands:
 
             response_message = (
                 f"{sku} decreased by "
-                f"{format_quantity(result['decrease_amount'])} {unit}: "
-                f"{format_quantity(result['old_quantity'])} -> "
-                f"{format_quantity(result['new_quantity'])}"
+                f"{illusion_helpers.format_quantity(result['decrease_amount'])} {unit}: "
+                f"{illusion_helpers.format_quantity(result['old_quantity'])} -> "
+                f"{illusion_helpers.format_quantity(result['new_quantity'])}"
             )
 
             if result["low_changed"]:
@@ -199,7 +202,8 @@ class DB_Commands:
             if result["low_changed"]:
                 thread_with_message = await channel.create_thread(
                     name=f"{item['NAME']}: {item['SKU']}",
-                    content=make_low_thread_content(item),
+                    content=illusion_helpers.make_low_thread_content(item),
+                    view=illusion_helpers.make_vendor_buttons(item),
                 )
                 thread_name = thread_with_message.thread.name
 
@@ -216,9 +220,9 @@ class DB_Commands:
 
             response_message = (
                 f"{sku} decreased by "
-                f"{format_quantity(result['decrease_amount'])} {unit}: "
-                f"{format_quantity(result['old_quantity'])} -> "
-                f"{format_quantity(result['new_quantity'])}"
+                f"{illusion_helpers.format_quantity(result['decrease_amount'])} {unit}: "
+                f"{illusion_helpers.format_quantity(result['old_quantity'])} -> "
+                f"{illusion_helpers.format_quantity(result['new_quantity'])}"
             )
 
             if result["low_changed"]:
@@ -241,8 +245,8 @@ class DB_Commands:
             unit = item["UNIT"] or "units"
 
             response_message = (
-                f"{sku} increased by {format_quantity(amount)} {unit}. "
-                f"New stock: {format_quantity(item['QUANTITY_ON_HAND'])} {unit}. "
+                f"{sku} increased by {illusion_helpers.format_quantity(amount)} {unit}. "
+                f"New stock: {illusion_helpers.format_quantity(item['QUANTITY_ON_HAND'])} {unit}. "
                 f"Low: {item['LOW']}"
             )
         else:
@@ -425,54 +429,6 @@ async def make_table(data, exclude=None):
 
     return "\n".join([header, separator] + table_rows)
 
-def format_quantity(value):
-    if value is None:
-        return "N/A"
-
-    value = float(value)
-
-    return f"{value:g}"
-
-
-def make_low_thread_content(item):
-    links = []
-
-    for vendor_number in range(1, 6):
-        vendor = item.get(f"VENDOR_{vendor_number}")
-        link = item.get(f"LINK_{vendor_number}")
-
-        if vendor or link:
-            links.append(f"{vendor or 'Vendor'}: {link or 'N/A'}")
-
-    if not links:
-        links.append("N/A")
-
-    stock_lines = []
-
-    if item["TRACKING_MODE"] != "KANBAN":
-        stock_lines.extend(
-            [
-                f"Current Stock: {format_quantity(item['QUANTITY_ON_HAND'])} "
-                f"{item['UNIT'] or ''}".strip(),
-                f"Low Threshold: {format_quantity(item['LOW_THRESHOLD'])} "
-                f"{item['UNIT'] or ''}".strip(),
-            ]
-        )
-
-    return "\n".join(
-        [
-            f"We are getting low on: {item['NAME']}",
-            f"SKU: {item['SKU']}",
-            f"Tracking Mode: {item['TRACKING_MODE']}",
-            f"Priority: {item['PRIORITY']}",
-            f"Order Quantity: {item['ORDER_QUANTITY']}",
-            *stock_lines,
-            "",
-            "Links:",
-            *links,
-        ]
-    )
-
 async def terminal_loop():
     await bot.wait_until_ready()
 
@@ -621,7 +577,10 @@ async def info(interaction: discord.Interaction, sku: str):
     if response_message.startswith("Invalid sku"):
         await interaction.response.send_message(response_message)
     else:
-        await interaction.response.send_message(f"```{response_message}```")
+        cleaned_sku = await clean_sku(sku)
+        item = inventory.get_item(cleaned_sku)
+
+        await interaction.response.send_message(f"```{response_message}```", view=illusion_helpers.make_vendor_buttons(item),)
 
 @bot.tree.command(name="delete", description="Delete an item")
 @app_commands.describe(sku="Item Sku")
