@@ -326,6 +326,23 @@ class DB_Commands:
 
         illusion_helpers.niimbot_print(bc_path, serial_port)
 
+    async def handler_command_help(self):
+        command_list = {
+            "about": "Info about illusion",
+            "exit": "Exit illusion",
+            "low": "Mark an item as low",
+            "resolve": "Mark an item as being not low",
+            "delete": "Delete an item",
+            "info": "Get info about an item",
+            "search": "Search for items",
+            "increase": "Increase item stock",
+            "decrease": "Decrease item stock",
+            "set": "Set item stock",
+            "print": "Print a barcode with the Niimbot",
+        }
+
+        return f"\n{await make_table(command_list)}\n"
+
 async def clean_sku(sku):
     if len(sku) <= 6:
         sku = "EER-" + ("0" * (6 - len(sku))) + sku
@@ -459,6 +476,9 @@ async def terminal_loop():
             if command == "exit":
                 inventory.save()
                 await bot.close()
+
+            if command == "help":
+                print(await command_handler.handler_command_help())
 
             elif command == "about":
                 text = f"""illusion \nversion: {illusion_version}""".strip("\n")
