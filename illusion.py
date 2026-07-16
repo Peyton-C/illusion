@@ -474,58 +474,63 @@ async def terminal_loop():
 
         parts = text.split(maxsplit=2) # Make sure to update this is commands w/ 3+ fields are added
         command = parts[0].lower()
+        response_message = None
 
-        if len(parts) == 1:
-            if command == "exit":
-                inventory.save()
-                await bot.close()
+        if command == "exit" and len(parts) >= 1:
+            response_message = "Exiting"
+            inventory.save()
+            await bot.close()
 
-            if command == "help":
-                print(await command_handler.handler_command_help())
+        elif command == "help" and len(parts) >= 1:
+            response_message = await command_handler.handler_command_help()
 
-            elif command == "about":
-                text = f"""illusion \nversion: {illusion_version}""".strip("\n")
-                
-                hat_lines = joanne_hat.splitlines()
-                text_lines = text.splitlines()
-
-                hat_width = max(len(line) for line in hat_lines)
-                gap = 4
-
-                for i in range(len(hat_lines)):
-                    if len(text_lines) > i:
-                        print(f"{hat_lines[i].ljust(hat_width + gap)}{text_lines[i]}")
-                    else:
-                        print(f"{hat_lines[i].ljust(hat_width + gap)}")
+        elif command == "about" and len(parts) >= 1:
+            text = f"""illusion \nversion: {illusion_version}""".strip("\n")
             
-            elif parts[0].startswith("EER-"): # Basic bar code scanner support
-                response_message = await command_handler.handler_decrease(parts[0])
-                print(response_message)
-        elif len(parts) == 2 and len(parts[1]) >= 1:
-                if command == "low":
-                    response_message = await command_handler.handler_low(parts[1])
-                elif command == "resolve":
-                    response_message = await command_handler.handler_resolve(parts[1])
-                elif command == "delete":
-                    response_message = await command_handler.handler_delete_item(parts[1])
-                elif command == "info":
-                    response_message = await command_handler.handler_info(parts[1])
-                elif command == "search":
-                    response_message = await command_handler.handler_search(parts[1])
-                elif command == "decrease":
-                    response_message = await command_handler.handler_decrease(parts[1])
-                elif command == "increase":
-                    response_message = await command_handler.handler_increase(parts[1])
-                elif command == "print" and config["illusion"]["printer"]["niimbot"]["enabled"]:
-                    response_message = await command_handler.handler_niimbot_barcode(parts[1])
-                print(response_message)
-        elif len(parts) == 3 and len(parts[1]) >= 1:
-            if command == "set":
-                response_message = await command_handler.handler_set_stock(parts[1], parts[2])
-            elif command == "decrease":
+            hat_lines = joanne_hat.splitlines()
+            text_lines = text.splitlines()
+
+            hat_width = max(len(line) for line in hat_lines)
+            gap = 4
+
+            for i in range(len(hat_lines)):
+                if len(text_lines) > i:
+                    print(f"{hat_lines[i].ljust(hat_width + gap)}{text_lines[i]}")
+                else:
+                    print(f"{hat_lines[i].ljust(hat_width + gap)}")
+            
+            response_message = ""
+            
+        elif parts[0].startswith("EER-") and len(parts) >= 1: # Basic bar code scanner support
+            response_message = await command_handler.handler_decrease(parts[0])
+        elif command == "low" and len(parts) >= 2:
+            response_message = await command_handler.handler_low(parts[1])
+        elif command == "resolve" and len(parts) >= 2:
+            response_message = await command_handler.handler_resolve(parts[1])
+        elif command == "delete" and len(parts) >= 2:
+            response_message = await command_handler.handler_delete_item(parts[1])
+        elif command == "info" and len(parts) >= 2:
+            response_message = await command_handler.handler_info(parts[1])
+        elif command == "search" and len(parts) >= 2:
+            response_message = await command_handler.handler_search(parts[1])
+        elif command == "decrease" and len(parts) >= 2:
+            if len(parts) == 3:
                 response_message = await command_handler.handler_decrease(parts[1], parts[2])
-            elif command == "increase":
+            else:
+                response_message = await command_handler.handler_decrease(parts[1])
+        elif command == "increase" and len(parts) >= 2:
+            if len(parts) == 3:
                 response_message = await command_handler.handler_increase(parts[1], parts[2])
+            else:
+                response_message = await command_handler.handler_increase(parts[1])
+        elif command == "print" and config["illusion"]["printer"]["niimbot"]["enabled"] and len(parts) >= 2:
+            response_message = await command_handler.handler_niimbot_barcode(parts[1])
+        elif command == "set" and len(parts) == 3:
+            response_message = await command_handler.handler_set_stock(parts[1], parts[2])
+        else:
+            response_message = f"Invalid Command: {command}\n\nHelp:{await command_handler.handler_command_help()}"
+
+        if response_message != None:
             print(response_message)
 
 
