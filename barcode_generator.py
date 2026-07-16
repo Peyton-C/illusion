@@ -42,7 +42,7 @@ def generate_barcode_niimbot(text: str, output_file: str = "barcode", text_side:
 
     _draw_rotated_text(image=label, text=text, box=(text_x, 0, text_x + text_box_width, label_h), font_path=font_path, font_size=font_size, rotation=text_rotation,)
 
-    label = label.convert("1")
+    #label = label.convert("1")
     label = label.rotate(90, expand=True)
 
     output_path = _png_filename(output_file)
