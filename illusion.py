@@ -6,8 +6,7 @@ import asyncio
 import yaml
 import tomllib
 from pathlib import Path
-import barcode_generator
-import illusion_helpers
+import barcode_generator, illusion_helpers
 
 pyproject_path = Path(__file__).resolve().parents[0] / "./pyproject.toml"
 
@@ -316,6 +315,16 @@ class DB_Commands:
     
     async def handler_generate_barcode(self, sku):
         return barcode_generator.generate_barcode(sku)
+    
+    async def handler_niimbot_barcode(self, sku):
+        sku = await clean_sku(sku)
+        serial_port = config["illusion"]["printer"]["niimbot"]["port"] 
+        font_path = config["illusion"]["printer"]["niimbot"]["font_path"]
+        font_size = config["illusion"]["printer"]["niimbot"]["font_size"]
+
+        bc_path = barcode_generator.generate_barcode_niimbot(text=sku, font_path=font_path, font_size=font_size)
+
+        illusion_helpers.niimbot_print(bc_path, serial_port)
 
 async def clean_sku(sku):
     if len(sku) <= 6:
@@ -484,6 +493,8 @@ async def terminal_loop():
                     response_message = await command_handler.handler_decrease(parts[1])
                 elif command == "increase":
                     response_message = await command_handler.handler_increase(parts[1])
+                elif command == "print" and config["illusion"]["printer"]["niimbot"]["enabled"]:
+                    response_message = await command_handler.handler_niimbot_barcode(parts[1])
                 print(response_message)
         elif len(parts) == 3 and len(parts[1]) >= 1:
             if command == "set":

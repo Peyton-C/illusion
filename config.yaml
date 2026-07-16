@@ -7,3 +7,10 @@ illusion:
 
   terminal:
     log_to_term: false
+
+  printer:
+    niimbot:
+      enabled: true 
+      port: ""
+      font_path: ""
+      font_size: 14

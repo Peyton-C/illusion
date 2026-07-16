@@ -1,4 +1,5 @@
 import discord
+import subprocess
 
 def format_quantity(value):
     if value is None:
@@ -76,3 +77,11 @@ def make_vendor_buttons(item):
         )
 
     return view
+
+def niimbot_print(img, addr):
+    result = subprocess.run(
+            ["uv", "run", "python", "-m", "niimprint", "-m", "d110", "--addr", addr, "-d", "3", "-i", f"{img}"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
