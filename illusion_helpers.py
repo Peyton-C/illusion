@@ -79,9 +79,20 @@ def make_vendor_buttons(item):
     return view
 
 def niimbot_print(img, addr):
-    result = subprocess.run(
-            ["uv", "run", "python", "-m", "niimprint", "-m", "d110", "--addr", addr, "-d", "3", "-i", f"{img}"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
+    try:
+        result = subprocess.run(
+                ["uv", "run", "python", "-m", "niimprint", "-m", "d110", "--addr", addr, "-d", "3", "-i", f"{img}"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        return "Printed, if this is the first print after returning from sleep it may be blank."
+    except subprocess.CalledProcessError as e:
+        if "AttributeError: 'NoneType' object has no attribute 'data'" in e.stderr:
+            return "Unable to print, printer is likely asleep"
+        elif "could not open port" in e.stderr:
+            return "Unable to print, printer is likely disconnected"
+        elif "packet = self._transceive(RequestCodeEnum.START_PRI" in e.stderr:
+            return "Unable to print, printer media bay is likely open"
+        else:
+            return f"Unable to print, reason: {e.stderr}"

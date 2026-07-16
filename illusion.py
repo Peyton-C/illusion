@@ -7,6 +7,8 @@ import yaml
 import tomllib
 from pathlib import Path
 import barcode_generator, illusion_helpers
+from PIL import Image
+import os, io
 
 pyproject_path = Path(__file__).resolve().parents[0] / "./pyproject.toml"
 
@@ -324,7 +326,8 @@ class DB_Commands:
 
         bc_path = barcode_generator.generate_barcode_niimbot(text=sku, font_path=font_path, font_size=font_size)
 
-        illusion_helpers.niimbot_print(bc_path, serial_port)
+        result = illusion_helpers.niimbot_print(bc_path, serial_port)
+        return result
 
     async def handler_command_help(self):
         command_list = {
@@ -703,7 +706,7 @@ async def add_hybrid(interaction: discord.Interaction, item_name: str, priority:
 @bot.tree.command(name="search", description="Search inventory by item name")
 @app_commands.describe(name="Item name")
 async def search(interaction: discord.Interaction, name: str):
-    await interaction.response.defer() #
+    await interaction.response.defer()
     response_message = await command_handler.handler_search(name)
 
     if response_message.startswith("No items found"):
@@ -722,6 +725,42 @@ async def generate_barcode(interaction: discord.Interaction, sku: str):
         await interaction.response.send_message(f"Barcode", file=file)
     else:
         await interaction.response.send_message(f"Invalid sku {sku}")
+
+@bot.tree.command(name="print_barcode", description="Print a barcode w/ the Niimbot")
+@app_commands.describe(sku="Item Sku")
+async def print_barcode(interaction: discord.Interaction, sku: str):
+    await interaction.response.defer()
+    sku = await clean_sku(sku)
+    
+    response_message = await command_handler.handler_niimbot_barcode(sku)
+    await interaction.followup.send(response_message)
+
+@bot.tree.command(name="print_image", description="Print an image w/ the Niimbot")
+@app_commands.describe(image="Image to print", rotate="Degrees to rotate by")
+async def print_barcode(interaction: discord.Interaction, image: discord.Attachment, rotate: int = 0):
+    if image.content_type is None or not image.content_type.startswith("image/"):
+        await interaction.response.send_message("Please upload a valid image.", ephemeral=True)
+        return
+    
+    await interaction.response.defer()
+
+    image_bytes = await image.read()
+    with Image.open(io.BytesIO(image_bytes)) as img:
+        rotated = img.rotate(rotate, expand=True)
+        resized = rotated.resize((92, 320))
+
+        os.makedirs("/tmp/illusion/imgs/", exist_ok=True)
+
+        output_path = os.path.join(
+            "/tmp/illusion/imgs/",
+            f"resized_{image.filename}",
+        )
+
+        resized.save(output_path)
+
+    serial_port = config["illusion"]["printer"]["niimbot"]["port"]
+    response_message = illusion_helpers.niimbot_print(output_path, serial_port)
+    await interaction.followup.send(response_message)
 
 @bot.event
 async def setup_hook():
