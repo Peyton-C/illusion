@@ -1,6 +1,6 @@
 [project]
 name = "illusion"
-version = "0.4.2"
+version = "0.4.3"
 description = "The Perfect Illusion of an inventory system"
 readme = "README.md"
 requires-python = ">=3.14"
@@ -14,4 +14,4 @@ dependencies = [
 ]
 
 [tool.uv.sources]
-niimprint = { git = "https://github.com/AndBondStyle/niimprint" }
+niimprint = { git = "https://github.com/Peyton-C/niimprint" }
