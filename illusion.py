@@ -752,7 +752,7 @@ async def print_barcode(interaction: discord.Interaction, image: discord.Attachm
     image_bytes = await image.read()
     with Image.open(io.BytesIO(image_bytes)) as img:
         rotated = img.rotate(rotate, expand=True)
-        resized = rotated.resize((92, 320))
+        resized = rotated.resize((96, 320))
 
         os.makedirs("/tmp/illusion/imgs/", exist_ok=True)
 
