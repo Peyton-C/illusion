@@ -1,6 +1,9 @@
 import discord
 import subprocess
 
+from PIL import Image
+from niimprint import BluetoothTransport, PrinterClient, SerialTransport
+
 def format_quantity(value):
     if value is None:
         return "N/A"
@@ -77,22 +80,61 @@ def make_vendor_buttons(item):
         )
 
     return view
-
-def niimbot_print(img, addr):
+            
+def niimbot_print(img, addr, model):
     try:
-        result = subprocess.run(
-                ["uv", "run", "python", "-m", "niimprint", "-m", "d110", "--addr", addr, "-d", "3", "-i", f"{img}"],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-        return "Printed, if this is the first print after returning from sleep it may be blank."
-    except subprocess.CalledProcessError as e:
-        if "AttributeError: 'NoneType' object has no attribute 'data'" in e.stderr:
-            return "Unable to print, printer is likely asleep"
-        elif "could not open port" in e.stderr:
+        transport = SerialTransport(port=addr)
+        printer = PrinterClient(transport)
+
+        heartbeat = printer.heartbeat()
+        media_info = printer.get_rfid()
+    except Exception as e:
+        err = str(e)
+
+        if "could not open port" in err:
             return "Unable to print, printer is likely disconnected"
-        elif "packet = self._transceive(RequestCodeEnum.START_PRI" in e.stderr:
-            return "Unable to print, printer media bay is likely open"
+        elif "AttributeError: 'NoneType' object has no attribute 'data'" in err:
+            return "Unable to print, printer is likely asleep"
         else:
-            return f"Unable to print, reason: {e.stderr}"
+            return f"Unable to print, Unknown Error: {err}"
+
+    if heartbeat["closingstate"] == 0:
+        return "Unable to print, The printer seems to be open, please close it and try again."
+    if media_info["remaining_media"] == 0:
+        return "No labels left, please replace roll!"
+    
+    if model in ("b1", "b18", "b21"):
+        max_width = 384
+    elif model in ("d11", "d110"):
+        max_width = 96
+
+    image = Image.open(img)
+
+    if image.width > max_width:
+        return "Unable to print, image too wide"
+    
+    printer.print_image(image, density=3)
+    return f"Printing...\nif this is the first print after returning from sleep it may be blank."
+    
+
+def niimbot_printer_info(addr):
+    try:
+        transport = SerialTransport(port=addr)
+        printer = PrinterClient(transport)
+
+        heartbeat = printer.heartbeat()
+        media_info = printer.get_rfid()
+    except Exception as e:
+        if "could not open port" in e.stderr:
+            return "Unable to get info, printer is likely disconnected"
+        elif "AttributeError: 'NoneType' object has no attribute 'data'" in e:
+            return "Unable to get info, printer is likely asleep"
+        else:
+            return f"Unable to get info, Unknown Error: {e}"
+        
+    if media_info != None:
+        remaining_media = media_info["total_len"] - media_info["used_len"]
+
+        return f"Labels left: {remaining_media}/{media_info["total_len"]}\nBattery Level: {heartbeat["powerlevel"]}/4"
+    else:
+        return "Unable to get printer info, labels might not be loaded."

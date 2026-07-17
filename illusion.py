@@ -351,7 +351,7 @@ class DB_Commands:
 
         bc_path = barcode_generator.generate_barcode_niimbot(text=sku, font_path=font_path, font_size=font_size)
 
-        result = illusion_helpers.niimbot_print(bc_path, serial_port)
+        result = illusion_helpers.niimbot_print(bc_path, serial_port, "d110")
         return result
 
     async def handler_command_help(self):
@@ -366,8 +366,10 @@ class DB_Commands:
             "increase": "Increase item stock",
             "decrease": "Decrease item stock",
             "set": "Set item stock",
-            "print": "Print a barcode with the Niimbot",
         }
+        if config["illusion"]["printer"]["niimbot"]["enabled"]:
+            command_list["print"] = "Print a barcode with the Niimbot"
+            command_list["printer_info"] = "Get info about the printer"
 
         return f"\n{await make_table(command_list)}\n"
 
@@ -559,6 +561,9 @@ async def terminal_loop():
                 response_message = await command_handler.handler_increase(parts[1])
         elif command == "print" and config["illusion"]["printer"]["niimbot"]["enabled"] and len(parts) >= 2:
             response_message = await command_handler.handler_niimbot_barcode(parts[1])
+        elif command == "printer_info" and config["illusion"]["printer"]["niimbot"]["enabled"] and len(parts) >= 1:
+            serial_port = config["illusion"]["printer"]["niimbot"]["port"]
+            response_message = illusion_helpers.niimbot_printer_info(serial_port)
         elif command == "set" and len(parts) == 3:
             response_message = await command_handler.handler_set_stock(parts[1], parts[2])
         else:
@@ -765,18 +770,25 @@ async def generate_barcode(interaction: discord.Interaction, sku: str):
     else:
         await interaction.response.send_message(f"Invalid sku {sku}")
 
-@bot.tree.command(name="print_barcode", description="Print a barcode w/ the Niimbot")
+@bot.tree.command(name="print_barcode", description="Print a barcode")
 @app_commands.describe(sku="Item Sku")
 async def print_barcode(interaction: discord.Interaction, sku: str):
+    if not config["illusion"]["printer"]["niimbot"]["enabled"]:
+        await interaction.response.send_message(f"Printer not enabled")
+        return
     await interaction.response.defer()
     sku = await clean_sku(sku)
     
     response_message = await command_handler.handler_niimbot_barcode(sku)
     await interaction.followup.send(response_message)
 
-@bot.tree.command(name="print_image", description="Print an image w/ the Niimbot")
+@bot.tree.command(name="print_image", description="Print an image")
 @app_commands.describe(image="Image to print", rotate="Degrees to rotate by")
 async def print_barcode(interaction: discord.Interaction, image: discord.Attachment, rotate: int = 0):
+    if not config["illusion"]["printer"]["niimbot"]["enabled"]:
+        await interaction.response.send_message(f"Printer not enabled")
+        return
+    
     if image.content_type is None or not image.content_type.startswith("image/"):
         await interaction.response.send_message("Please upload a valid image.", ephemeral=True)
         return
@@ -794,11 +806,23 @@ async def print_barcode(interaction: discord.Interaction, image: discord.Attachm
             "/tmp/illusion/imgs/",
             f"resized_{image.filename}",
         )
-
+        
         resized.save(output_path)
 
     serial_port = config["illusion"]["printer"]["niimbot"]["port"]
-    response_message = illusion_helpers.niimbot_print(output_path, serial_port)
+    response_message = illusion_helpers.niimbot_print(output_path, serial_port, "d110")
+    await interaction.followup.send(response_message)
+
+@bot.tree.command(name="printer_info", description="Get info about the printer")
+async def print_barcode(interaction: discord.Interaction):
+    if not config["illusion"]["printer"]["niimbot"]["enabled"]:
+        await interaction.response.send_message(f"Printer not enabled")
+        return
+    
+    await interaction.response.defer()
+    
+    serial_port = config["illusion"]["printer"]["niimbot"]["port"]
+    response_message = illusion_helpers.niimbot_printer_info(serial_port)
     await interaction.followup.send(response_message)
 
 @bot.event
