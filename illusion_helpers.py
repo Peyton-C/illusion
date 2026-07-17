@@ -97,10 +97,11 @@ def niimbot_print(img, addr, model):
             return "Unable to print, printer is likely asleep"
         else:
             return f"Unable to print, Unknown Error: {err}"
+    remaining_media = media_info["total_len"] - media_info["used_len"]
 
     if heartbeat["closingstate"] == 0:
         return "Unable to print, The printer seems to be open, please close it and try again."
-    if media_info["remaining_media"] == 0:
+    if remaining_media == 0:
         return "No labels left, please replace roll!"
     
     if model in ("b1", "b18", "b21"):
