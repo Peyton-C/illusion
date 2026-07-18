@@ -809,7 +809,7 @@ async def print_barcode(interaction: discord.Interaction, sku: str):
 
 @bot.tree.command(name="print_image", description="Print an image")
 @app_commands.describe(image="Image to print", rotate="Degrees to rotate by")
-async def print_barcode(interaction: discord.Interaction, image: discord.Attachment, rotate: int = 0):
+async def print_image(interaction: discord.Interaction, image: discord.Attachment, rotate: int = 0):
     if not config["illusion"]["printer"]["niimbot"]["enabled"]:
         await interaction.response.send_message(f"Printer not enabled")
         return
@@ -840,7 +840,7 @@ async def print_barcode(interaction: discord.Interaction, image: discord.Attachm
 
 @bot.tree.command(name="print_label", description="Print a label")
 @app_commands.describe(line_1="Line 1", line_2="Line 2")
-async def print_barcode(interaction: discord.Interaction, line_1: str, line_2: str | None = None):
+async def print_label(interaction: discord.Interaction, line_1: str, line_2: str | None = None):
     if not config["illusion"]["printer"]["niimbot"]["enabled"]:
         await interaction.response.send_message(f"Printer not enabled")
         return
@@ -850,7 +850,7 @@ async def print_barcode(interaction: discord.Interaction, line_1: str, line_2: s
     await interaction.followup.send(response_message)
 
 @bot.tree.command(name="printer_info", description="Get info about the printer")
-async def print_barcode(interaction: discord.Interaction):
+async def printer_info(interaction: discord.Interaction):
     if not config["illusion"]["printer"]["niimbot"]["enabled"]:
         await interaction.response.send_message(f"Printer not enabled")
         return
