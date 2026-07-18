@@ -339,24 +339,81 @@ class DB_Commands:
         return illusion_helpers.niimbot_print(output, serial_port, "d110")
 
     async def handler_command_help(self):
-        command_list = {
-            "about": "Info about illusion",
-            "exit": "Exit illusion",
-            "low": "Mark an item as low",
-            "resolve": "Mark an item as being not low",
-            "delete": "Delete an item",
-            "info": "Get info about an item",
-            "search": "Search for items",
-            "increase": "Increase item stock",
-            "decrease": "Decrease item stock",
-            "set": "Set item stock",
-        }
-        if config["illusion"]["printer"]["niimbot"]["enabled"]:
-            command_list["print"] = "Print a barcode with the Niimbot"
-            command_list["printer_info"] = "Get info about the printer"
-            command_list["print_label"] = "Print a label with the specified text"
+        command_list = [
+            {
+                "COMMAND": "about",
+                "USAGE": "about",
+                "DESCRIPTION": "Info about illusion",
+            },
+            {
+                "COMMAND": "exit",
+                "USAGE": "exit",
+                "DESCRIPTION": "Exit illusion",
+            },
+            {
+                "COMMAND": "low",
+                "USAGE": "low <sku>",
+                "DESCRIPTION": "Mark an item as low",
+            },
+            {
+                "COMMAND": "resolve",
+                "USAGE": "resolve <sku>",
+                "DESCRIPTION": "Mark an item as not low",
+            },
+            {
+                "COMMAND": "delete",
+                "USAGE": "delete <sku>",
+                "DESCRIPTION": "Delete an item",
+            },
+            {
+                "COMMAND": "info",
+                "USAGE": "info <sku>",
+                "DESCRIPTION": "Get info about an item",
+            },
+            {
+                "COMMAND": "search",
+                "USAGE": "search <item name>",
+                "DESCRIPTION": "Search for items",
+            },
+            {
+                "COMMAND": "increase",
+                "USAGE": "increase <sku> [amount]",
+                "DESCRIPTION": "Increase item stock",
+            },
+            {
+                "COMMAND": "decrease",
+                "USAGE": "decrease <sku> [amount]",
+                "DESCRIPTION": "Decrease item stock",
+            },
+            {
+                "COMMAND": "set",
+                "USAGE": "set <sku> <quantity>",
+                "DESCRIPTION": "Set item stock",
+            },
+        ]
 
-        return f"\n{illusion_helpers.make_table(command_list)}\n"
+        if config["illusion"]["printer"]["niimbot"]["enabled"]:
+            command_list.extend(
+                [
+                    {
+                        "COMMAND": "print",
+                        "USAGE": "print <sku>",
+                        "DESCRIPTION": "Print a barcode with the printer",
+                    },
+                    {
+                        "COMMAND": "printer_info",
+                        "USAGE": "printer_info",
+                        "DESCRIPTION": "Get info about the printer",
+                    },
+                    {
+                        "COMMAND": "print_label",
+                        "USAGE": 'print_label <line 1> ["line 2"]',
+                        "DESCRIPTION": "Print a label with the specified text",
+                    },
+                ]
+            )
+
+        return f"<sku> required argument\n[amount] optional argument\n\n{illusion_helpers.make_table(command_list)}\n"
 
 async def terminal_loop():
     await bot.wait_until_ready()
@@ -370,7 +427,7 @@ async def terminal_loop():
         if not text:
             continue
 
-        parts = text.split(maxsplit=2) # Make sure to update this is commands w/ 3+ fields are added
+        parts = text.split(maxsplit=2) # Make sure to update this if commands w/ 3+ fields are added
         command = parts[0].lower()
         response_message = None
 
