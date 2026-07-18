@@ -30,30 +30,6 @@ joanne_hat = r"""
   ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ 
 """.strip("\n")
 
-FIELD_NAMES = {
-    "SKU": "SKU",
-    "NAME": "Name",
-    "PRIORITY": "Priority",
-    "ORDER_QUANTITY": "Order Qty",
-    "TRACKING_MODE": "Tracking Mode",
-    "QUANTITY_ON_HAND": "Quantity",
-    "LOW_THRESHOLD": "Low Threshold",
-    "LOW_THREAD_ID": "Low Thread",
-    "UNIT": "Unit",
-    "DECREASE_AMOUNT": "Decrease By",
-    "LOW": "Low",
-    "VENDOR_1": "Vendor 1",
-    "LINK_1": "Link 1",
-    "VENDOR_2": "Vendor 2",
-    "LINK_2": "Link 2",
-    "VENDOR_3": "Vendor 3",
-    "LINK_3": "Link 3",
-    "VENDOR_4": "Vendor 4",
-    "LINK_4": "Link 4",
-    "VENDOR_5": "Vendor 5",
-    "LINK_5": "Link 5",
-}
-
 class DB_Commands:
     async def handler_add_item(self, item_name, priority, order_quantity, tracking_mode="KANBAN", quantity_on_hand=None, 
                                low_threshold=None, unit=None, decrease_amount=None, vendor_1 = None, link_1 = None, 
@@ -93,7 +69,7 @@ class DB_Commands:
     
     async def handler_delete_item(self, sku):
         global inventory
-        sku = await clean_sku(sku)
+        sku = illusion_helpers.clean_sku(sku)
         if inventory.validate_sku(sku):
             item = inventory.get_item(sku)
             inventory.delete_item(sku)
@@ -107,10 +83,10 @@ class DB_Commands:
     async def handler_info(self, sku):
         global inventory
 
-        sku = await clean_sku(sku)
+        sku = illusion_helpers.clean_sku(sku)
         if inventory.validate_sku(sku):
             item = inventory.get_item(sku)
-            response_message = await make_table(item, ["PRIORITY", "TRACKING_MODE", "LOW_THRESHOLD", "UNIT", "LOW_THREAD_ID", "DECREASE_AMOUNT", 
+            response_message = illusion_helpers.make_table(item, ["PRIORITY", "TRACKING_MODE", "LOW_THRESHOLD", "UNIT", "LOW_THREAD_ID", "DECREASE_AMOUNT", 
                                                        "VENDOR_1", "LINK_1", "VENDOR_2", "LINK_2", "VENDOR_3", "LINK_3", "VENDOR_4", "LINK_4", "VENDOR_5", "LINK_5"])
         else:
             response_message = f"Invalid sku: {sku}"
@@ -120,7 +96,7 @@ class DB_Commands:
     async def handler_resolve(self, sku, archive_thread=False):
         global inventory
 
-        sku = await clean_sku(sku)
+        sku = illusion_helpers.clean_sku(sku)
         if inventory.validate_sku(sku):
             item = inventory.get_item(sku)
 
@@ -141,7 +117,7 @@ class DB_Commands:
     async def handler_low(self, sku):
         global inventory, channel
 
-        sku = await clean_sku(sku)
+        sku = illusion_helpers.clean_sku(sku)
         if inventory.validate_sku(sku):
             result = inventory.decrease_item(sku)
             item = result["item"]
@@ -211,13 +187,13 @@ class DB_Commands:
             "LOW",
         ]
 
-        return await make_table(results, exclude=exclude)
+        return illusion_helpers.make_table(results, exclude=exclude)
     
     async def handler_decrease(self, sku, amount=None):
         global inventory
         global channel
 
-        sku = await clean_sku(sku)
+        sku = illusion_helpers.clean_sku(sku)
 
         if inventory.validate_sku(sku):
             result = inventory.decrease_item(sku, amount)
@@ -263,7 +239,7 @@ class DB_Commands:
     async def handler_increase(self, sku, amount=1):
         global inventory
 
-        sku = await clean_sku(sku)
+        sku = illusion_helpers.clean_sku(sku)
 
         if inventory.validate_sku(sku):
             item = inventory.increase_item(sku, float(amount))
@@ -284,7 +260,7 @@ class DB_Commands:
     async def handler_set_stock(self, sku, quantity):
         global inventory
 
-        sku = await clean_sku(sku)
+        sku = illusion_helpers.clean_sku(sku)
 
         if inventory.validate_sku(sku):
             item = inventory.set_stock(sku, float(quantity))
@@ -344,7 +320,7 @@ class DB_Commands:
         return barcode_generator.generate_barcode(sku)
     
     async def handler_niimbot_barcode(self, sku):
-        sku = await clean_sku(sku)
+        sku = illusion_helpers.clean_sku(sku)
         serial_port = config["illusion"]["printer"]["niimbot"]["port"] 
         font_path = config["illusion"]["printer"]["niimbot"]["font_path"]
         font_size = config["illusion"]["printer"]["niimbot"]["font_size"]
@@ -363,147 +339,81 @@ class DB_Commands:
         return illusion_helpers.niimbot_print(output, serial_port, "d110")
 
     async def handler_command_help(self):
-        command_list = {
-            "about": "Info about illusion",
-            "exit": "Exit illusion",
-            "low": "Mark an item as low",
-            "resolve": "Mark an item as being not low",
-            "delete": "Delete an item",
-            "info": "Get info about an item",
-            "search": "Search for items",
-            "increase": "Increase item stock",
-            "decrease": "Decrease item stock",
-            "set": "Set item stock",
-        }
+        command_list = [
+            {
+                "COMMAND": "about",
+                "USAGE": "about",
+                "DESCRIPTION": "Info about illusion",
+            },
+            {
+                "COMMAND": "exit",
+                "USAGE": "exit",
+                "DESCRIPTION": "Exit illusion",
+            },
+            {
+                "COMMAND": "low",
+                "USAGE": "low <sku>",
+                "DESCRIPTION": "Mark an item as low",
+            },
+            {
+                "COMMAND": "resolve",
+                "USAGE": "resolve <sku>",
+                "DESCRIPTION": "Mark an item as not low",
+            },
+            {
+                "COMMAND": "delete",
+                "USAGE": "delete <sku>",
+                "DESCRIPTION": "Delete an item",
+            },
+            {
+                "COMMAND": "info",
+                "USAGE": "info <sku>",
+                "DESCRIPTION": "Get info about an item",
+            },
+            {
+                "COMMAND": "search",
+                "USAGE": "search <item name>",
+                "DESCRIPTION": "Search for items",
+            },
+            {
+                "COMMAND": "increase",
+                "USAGE": "increase <sku> [amount]",
+                "DESCRIPTION": "Increase item stock",
+            },
+            {
+                "COMMAND": "decrease",
+                "USAGE": "decrease <sku> [amount]",
+                "DESCRIPTION": "Decrease item stock",
+            },
+            {
+                "COMMAND": "set",
+                "USAGE": "set <sku> <quantity>",
+                "DESCRIPTION": "Set item stock",
+            },
+        ]
+
         if config["illusion"]["printer"]["niimbot"]["enabled"]:
-            command_list["print"] = "Print a barcode with the Niimbot"
-            command_list["printer_info"] = "Get info about the printer"
-            command_list["print_label"] = "Print a label with the specified text"
-
-        return f"\n{await make_table(command_list)}\n"
-
-async def clean_sku(sku):
-    if len(sku) <= 6:
-        sku = "EER-" + ("0" * (6 - len(sku))) + sku
-    return sku
-
-async def make_table(data, exclude=None, field_names=None):
-    missing = "N/A"
-
-    if exclude is None:
-        exclude = [""]
-
-    if field_names is None:
-        field_names = FIELD_NAMES
-
-    if isinstance(data, dict):
-        rows = [data]
-    else:
-        rows = data
-
-    if not rows:
-        return ""
-
-    def friendly_name(field):
-        return field_names.get(field, field)
-
-    # Vertical Table
-    if len(rows) == 1:
-        row = rows[0]
-
-        field_header = "Field"
-        value_header = "Value"
-
-        table_data = []
-
-        for field in row:
-            if field not in exclude:
-                value = row.get(field, missing)
-                table_data.append((friendly_name(field), str(value)))
-
-        if not table_data:
-            return ""
-
-        field_width = max(
-            len(field_header),
-            *(len(field) for field, _ in table_data),
-        )
-
-        value_width = max(
-            len(value_header),
-            *(len(value) for _, value in table_data),
-        )
-
-        header = (
-            f"| {field_header.ljust(field_width)} "
-            f"| {value_header.ljust(value_width)} |"
-        )
-
-        separator = f"| {'-' * field_width} | {'-' * value_width} |"
-
-        body = []
-
-        for field, value in table_data:
-            body.append(
-                f"| {field.ljust(field_width)} | {value.ljust(value_width)} |"
+            command_list.extend(
+                [
+                    {
+                        "COMMAND": "print",
+                        "USAGE": "print <sku>",
+                        "DESCRIPTION": "Print a barcode with the printer",
+                    },
+                    {
+                        "COMMAND": "printer_info",
+                        "USAGE": "printer_info",
+                        "DESCRIPTION": "Get info about the printer",
+                    },
+                    {
+                        "COMMAND": "print_label",
+                        "USAGE": 'print_label <line 1> ["line 2"]',
+                        "DESCRIPTION": "Print a label with the specified text",
+                    },
+                ]
             )
 
-        return "\n".join([header, separator] + body)
-
-    # Horizontal Table
-    columns = []
-
-    for row in rows:
-        for key in row:
-            if key not in columns and key not in exclude:
-                columns.append(key)
-
-    if not columns:
-        return ""
-
-    string_rows = []
-
-    for row in rows:
-        string_row = {}
-
-        for column in columns:
-            string_row[column] = str(row.get(column, missing))
-
-        string_rows.append(string_row)
-
-    column_widths = {}
-
-    for column in columns:
-        display_column = friendly_name(column)
-        max_cell_width = max(len(row[column]) for row in string_rows)
-        column_widths[column] = max(len(display_column), max_cell_width)
-
-    header_cells = []
-
-    for column in columns:
-        display_column = friendly_name(column)
-        header_cells.append(display_column.ljust(column_widths[column]))
-
-    header = "| " + " | ".join(header_cells) + " |"
-
-    separator_cells = []
-
-    for column in columns:
-        separator_cells.append("-" * column_widths[column])
-
-    separator = "| " + " | ".join(separator_cells) + " |"
-
-    table_rows = []
-
-    for row in string_rows:
-        cells = []
-
-        for column in columns:
-            cells.append(row[column].ljust(column_widths[column]))
-
-        table_rows.append("| " + " | ".join(cells) + " |")
-
-    return "\n".join([header, separator] + table_rows)
+        return f"<sku> required argument\n[amount] optional argument\n\n{illusion_helpers.make_table(command_list)}\n"
 
 async def terminal_loop():
     await bot.wait_until_ready()
@@ -517,7 +427,7 @@ async def terminal_loop():
         if not text:
             continue
 
-        parts = text.split(maxsplit=2) # Make sure to update this is commands w/ 3+ fields are added
+        parts = text.split(maxsplit=2) # Make sure to update this if commands w/ 3+ fields are added
         command = parts[0].lower()
         response_message = None
 
@@ -574,6 +484,8 @@ async def terminal_loop():
             serial_port = config["illusion"]["printer"]["niimbot"]["port"]
             response_message = illusion_helpers.niimbot_printer_info(serial_port)
         elif command == "print_label" and config["illusion"]["printer"]["niimbot"]["enabled"] and len(parts) >= 2:
+            # Awful, Awful, Awful
+            # I hate this code
             if len(parts) == 3:
                 cleaned_text = text.replace("print_label ", "")
                 if '"' in cleaned_text:
@@ -647,7 +559,7 @@ async def resolve(interaction: discord.Interaction, sku: str | None = None):
     response_message = await command_handler.handler_resolve(sku, False)
     await interaction.response.send_message(response_message)
 
-    cleaned_sku = await clean_sku(sku)
+    cleaned_sku = illusion_helpers.clean_sku(sku)
     await command_handler.archive_low_thread(cleaned_sku)
 
 @bot.tree.command(name="low", description="Mark stock as being low")
@@ -662,7 +574,7 @@ async def set_stock(interaction: discord.Interaction, sku: str, value: str):
     response_message = await command_handler.handler_set_stock(sku, value)
     await interaction.response.send_message(response_message)
 
-    cleaned_sku = await clean_sku(sku)
+    cleaned_sku = illusion_helpers.clean_sku(sku)
     item = inventory.get_item(cleaned_sku)
     if item["LOW"] == False and item["LOW_THREAD_ID"] != None:
         await command_handler.archive_low_thread(cleaned_sku)
@@ -679,7 +591,7 @@ async def increase(interaction: discord.Interaction, sku: str, amount: str | Non
     response_message = await command_handler.handler_increase(sku, amount)
     await interaction.response.send_message(response_message)
 
-    cleaned_sku = await clean_sku(sku)
+    cleaned_sku = illusion_helpers.clean_sku(sku)
     item = inventory.get_item(cleaned_sku)
     if item["LOW"] == False and item["LOW_THREAD_ID"] != None:
         await command_handler.archive_low_thread(sku)
@@ -692,7 +604,7 @@ async def info(interaction: discord.Interaction, sku: str):
     if response_message.startswith("Invalid sku"):
         await interaction.response.send_message(response_message)
     else:
-        cleaned_sku = await clean_sku(sku)
+        cleaned_sku = illusion_helpers.clean_sku(sku)
         item = inventory.get_item(cleaned_sku)
 
         await interaction.response.send_message(f"```{response_message}```", view=illusion_helpers.make_vendor_buttons(item),)
@@ -786,14 +698,12 @@ async def search(interaction: discord.Interaction, name: str):
 @bot.tree.command(name="generate_barcode", description="Generate a barcode")
 @app_commands.describe(sku="Item Sku")
 async def generate_barcode(interaction: discord.Interaction, sku: str):
-    sku = await clean_sku(sku)
-    if inventory.validate_sku(sku):
-        file_path = await command_handler.handler_generate_barcode(sku)
-        file = discord.File(file_path)
+    sku = illusion_helpers.clean_sku(sku)
+    
+    file_path = await command_handler.handler_generate_barcode(sku)
+    file = discord.File(file_path)
 
-        await interaction.response.send_message(f"Barcode", file=file)
-    else:
-        await interaction.response.send_message(f"Invalid sku {sku}")
+    await interaction.response.send_message(f"Barcode", file=file)
 
 @bot.tree.command(name="print_barcode", description="Print a barcode")
 @app_commands.describe(sku="Item Sku")
@@ -802,14 +712,14 @@ async def print_barcode(interaction: discord.Interaction, sku: str):
         await interaction.response.send_message(f"Printer not enabled")
         return
     await interaction.response.defer()
-    sku = await clean_sku(sku)
+    sku = illusion_helpers.clean_sku(sku)
     
     response_message = await command_handler.handler_niimbot_barcode(sku)
     await interaction.followup.send(response_message)
 
 @bot.tree.command(name="print_image", description="Print an image")
 @app_commands.describe(image="Image to print", rotate="Degrees to rotate by")
-async def print_barcode(interaction: discord.Interaction, image: discord.Attachment, rotate: int = 0):
+async def print_image(interaction: discord.Interaction, image: discord.Attachment, rotate: int = 0):
     if not config["illusion"]["printer"]["niimbot"]["enabled"]:
         await interaction.response.send_message(f"Printer not enabled")
         return
@@ -840,7 +750,7 @@ async def print_barcode(interaction: discord.Interaction, image: discord.Attachm
 
 @bot.tree.command(name="print_label", description="Print a label")
 @app_commands.describe(line_1="Line 1", line_2="Line 2")
-async def print_barcode(interaction: discord.Interaction, line_1: str, line_2: str | None = None):
+async def print_label(interaction: discord.Interaction, line_1: str, line_2: str | None = None):
     if not config["illusion"]["printer"]["niimbot"]["enabled"]:
         await interaction.response.send_message(f"Printer not enabled")
         return
@@ -850,7 +760,7 @@ async def print_barcode(interaction: discord.Interaction, line_1: str, line_2: s
     await interaction.followup.send(response_message)
 
 @bot.tree.command(name="printer_info", description="Get info about the printer")
-async def print_barcode(interaction: discord.Interaction):
+async def printer_info(interaction: discord.Interaction):
     if not config["illusion"]["printer"]["niimbot"]["enabled"]:
         await interaction.response.send_message(f"Printer not enabled")
         return
