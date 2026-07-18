@@ -370,12 +370,14 @@ def niimbot_printer_info(addr):
         heartbeat = printer.heartbeat()
         media_info = printer.get_rfid()
     except Exception as e:
-        if "could not open port" in e.stderr:
+        err = str(e)
+
+        if "could not open port" in err:
             return "Unable to get info, printer is likely disconnected"
-        elif "AttributeError: 'NoneType' object has no attribute 'data'" in e:
+        elif "AttributeError: 'NoneType' object has no attribute 'data'" in err:
             return "Unable to get info, printer is likely asleep"
         else:
-            return f"Unable to get info, Unknown Error: {e}"
+            return f"Unable to get info, Unknown Error: {err}"
         
     if media_info != None:
         remaining_media = media_info["total_len"] - media_info["used_len"]
