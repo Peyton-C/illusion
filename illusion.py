@@ -642,13 +642,11 @@ async def search(interaction: discord.Interaction, name: str):
 @app_commands.describe(sku="Item Sku")
 async def generate_barcode(interaction: discord.Interaction, sku: str):
     sku = illusion_helpers.clean_sku(sku)
-    if inventory.validate_sku(sku):
-        file_path = await command_handler.handler_generate_barcode(sku)
-        file = discord.File(file_path)
+    
+    file_path = await command_handler.handler_generate_barcode(sku)
+    file = discord.File(file_path)
 
-        await interaction.response.send_message(f"Barcode", file=file)
-    else:
-        await interaction.response.send_message(f"Invalid sku {sku}")
+    await interaction.response.send_message(f"Barcode", file=file)
 
 @bot.tree.command(name="print_barcode", description="Print a barcode")
 @app_commands.describe(sku="Item Sku")
