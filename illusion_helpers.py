@@ -1,7 +1,7 @@
 import discord
-import subprocess
+import os
 
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 from niimprint import BluetoothTransport, PrinterClient, SerialTransport
 
 def format_quantity(value):
@@ -80,7 +80,104 @@ def make_vendor_buttons(item):
         )
 
     return view
-            
+
+def generate_label(line_1, line_2=None, font=None):
+    lines = [line_1]
+    if line_2 != None:
+        lines.append(line_2)
+    
+    width = 320
+    height = 96
+    padding = 2
+
+    usable_width = width - padding
+    usable_height = height - padding
+
+    temp_img = Image.new("RGB", [width, height])
+    draw = ImageDraw.Draw(temp_img)
+
+    def get_font(font_size):
+        if font is not None and font != "":
+            return ImageFont.truetype(font, font_size)
+        else:
+            return ImageFont.load_default()
+
+    def measure_text(font, font_size):
+        line_boxes = []
+
+        for line in lines:
+            bbox = draw.textbbox((0, 0), line, font=font)
+            left, top, right, bottom = bbox
+            line_boxes.append(
+                {
+                    "text": line,
+                    "bbox": bbox,
+                    "width": right - left,
+                    "height": bottom - top,
+                }
+            )
+
+        line_spacing = int(font_size * 0.15) if len(lines) > 1 else 0
+        total_text_height = sum(box["height"] for box in line_boxes)
+        total_text_height += line_spacing * (len(lines) - 1)
+
+        max_text_width = max(box["width"] for box in line_boxes)
+
+        return max_text_width, total_text_height, line_boxes, line_spacing
+
+    def font_fits(font_size):
+        font = get_font(font_size)
+        text_width, text_height, _, _ = measure_text(font, font_size)
+
+        return text_width <= usable_width and text_height <= usable_height
+
+    # Binary search for the largest font size that fits
+    low = 6
+    high = 96
+    best_size = low
+
+    while low <= high:
+        mid = (low + high) // 2
+
+        if font_fits(mid):
+            best_size = mid
+            low = mid + 1
+        else:
+            high = mid - 1
+
+    font = get_font(best_size)
+    _, total_text_height, line_boxes, line_spacing = measure_text(font, best_size)
+
+    img = Image.new("RGB", [width, height], "white")
+    draw = ImageDraw.Draw(img)
+
+    current_y = (height - total_text_height) / 2
+
+    for box in line_boxes:
+        text = box["text"]
+        left, top, right, bottom = box["bbox"]
+
+        text_width = box["width"]
+        text_height = box["height"]
+
+        x = (width - text_width) / 2 - left
+        y = current_y - top
+
+        draw.text((x, y), text, font=font, fill="black")
+
+        current_y += text_height + line_spacing
+
+    os.makedirs("/tmp/illusion/imgs/", exist_ok=True)
+
+    output_path = os.path.join(
+        "/tmp/illusion/imgs/",
+        f"label.png",
+    )
+    
+    img = img.rotate(90, expand=True)
+    img.save(output_path)
+    return output_path
+
 def niimbot_print(img, addr, model):
     try:
         transport = SerialTransport(port=addr)

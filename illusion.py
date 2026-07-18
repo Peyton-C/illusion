@@ -353,6 +353,14 @@ class DB_Commands:
 
         result = illusion_helpers.niimbot_print(bc_path, serial_port, "d110")
         return result
+    
+    async def handler_print_label(self, line_1, line_2):
+        serial_port = config["illusion"]["printer"]["niimbot"]["port"]
+        font = config["illusion"]["printer"]["niimbot"]["font_path"]
+
+        output = illusion_helpers.generate_label(line_1, line_2, font)
+        
+        return illusion_helpers.niimbot_print(output, serial_port, "d110")
 
     async def handler_command_help(self):
         command_list = {
@@ -370,6 +378,7 @@ class DB_Commands:
         if config["illusion"]["printer"]["niimbot"]["enabled"]:
             command_list["print"] = "Print a barcode with the Niimbot"
             command_list["printer_info"] = "Get info about the printer"
+            command_list["print_label"] = "Print a label with the specified text"
 
         return f"\n{await make_table(command_list)}\n"
 
@@ -564,6 +573,22 @@ async def terminal_loop():
         elif command == "printer_info" and config["illusion"]["printer"]["niimbot"]["enabled"] and len(parts) >= 1:
             serial_port = config["illusion"]["printer"]["niimbot"]["port"]
             response_message = illusion_helpers.niimbot_printer_info(serial_port)
+        elif command == "print_label" and config["illusion"]["printer"]["niimbot"]["enabled"] and len(parts) >= 2:
+            if len(parts) == 3:
+                cleaned_text = text.replace("print_label ", "")
+                if '"' in cleaned_text:
+                    lines = cleaned_text.split('"')
+                    if len(lines) >= 4:
+                        line_2 = lines[3]
+                    line_1 = lines[1]
+                else:
+                    line_1 = f"{parts[1]} {parts[2]}"
+                    line_2 = None
+            else:
+                line_1 = parts[1]
+                line_2 = None
+            
+            response_message = await command_handler.handler_print_label(line_1, line_2)
         elif command == "set" and len(parts) == 3:
             response_message = await command_handler.handler_set_stock(parts[1], parts[2])
         else:
@@ -811,6 +836,17 @@ async def print_barcode(interaction: discord.Interaction, image: discord.Attachm
 
     serial_port = config["illusion"]["printer"]["niimbot"]["port"]
     response_message = illusion_helpers.niimbot_print(output_path, serial_port, "d110")
+    await interaction.followup.send(response_message)
+
+@bot.tree.command(name="print_label", description="Print a label")
+@app_commands.describe(line_1="Line 1", line_2="Line 2")
+async def print_barcode(interaction: discord.Interaction, line_1: str, line_2: str | None = None):
+    if not config["illusion"]["printer"]["niimbot"]["enabled"]:
+        await interaction.response.send_message(f"Printer not enabled")
+        return
+    await interaction.response.defer()
+    
+    response_message = await command_handler.handler_print_label(line_1, line_2)
     await interaction.followup.send(response_message)
 
 @bot.tree.command(name="printer_info", description="Get info about the printer")
