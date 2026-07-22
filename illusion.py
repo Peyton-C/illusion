@@ -443,6 +443,7 @@ class DB_Commands:
 async def terminal_loop():
     await bot.wait_until_ready()
 
+    print(f"illusion {illusion_version}")
     print("ready")
 
     while not bot.is_closed():
