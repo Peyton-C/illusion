@@ -337,6 +337,31 @@ class DB_Commands:
         output = illusion_helpers.generate_label(line_1, line_2, font)
         
         return illusion_helpers.niimbot_print(output, serial_port, "d110")
+    
+    async def handler_update_item(self, sku, updates: dict[str, object]):
+        global inventory
+        sku = illusion_helpers.clean_sku(sku)
+
+        if not inventory.validate_sku(sku):
+            return f"Invalid sku: {sku}"
+        
+        cleaned = {}
+        
+        for value, key in updates.items():
+            if key != None:
+                cleaned[value] = key
+
+        updates = cleaned
+
+        if not updates:
+            return "No updates provided."
+
+        inventory.update_item(sku, updates)
+        inventory.save()
+
+        changed_fields = ", ".join(updates.keys())
+
+        return f"Updated {sku}: {changed_fields}"
 
     async def handler_command_help(self):
         command_list = [
@@ -413,11 +438,12 @@ class DB_Commands:
                 ]
             )
 
-        return f"<sku> required argument\n[amount] optional argument\n\n{illusion_helpers.make_table(command_list)}\n"
+        return f"\n<sku> required argument\n[amount] optional argument\n\n{illusion_helpers.make_table(command_list)}\n"
 
 async def terminal_loop():
     await bot.wait_until_ready()
 
+    print(f"illusion {illusion_version}")
     print("ready")
 
     while not bot.is_closed():
@@ -770,6 +796,50 @@ async def printer_info(interaction: discord.Interaction):
     serial_port = config["illusion"]["printer"]["niimbot"]["port"]
     response_message = illusion_helpers.niimbot_printer_info(serial_port)
     await interaction.followup.send(response_message)
+
+@bot.tree.command(name="update_item", description="Update an existing itme")
+@app_commands.describe(sku="Item SKU", item_name="Item Name", priority="Item Priority",
+                       order_quantity="Number of units to order when stock low", unit="Unit name",
+                       quantity="Number of units on hand", low_threshold="Minimum Stock", decrease_amount="Amount to decrease by",
+                       vendor_1="Source 1 for Item", link_1="Source 1 Purchase Link",
+                       vendor_2="Source 2 for Item", link_2="Source 2 Purchase Link",
+                       vendor_3="Source 3 for Item", link_3="Source 3 Purchase Link",
+                       vendor_4="Source 4 for Item", link_4="Source 4 Purchase Link",
+                       vendor_5="Source 5 for Item", link_5="Source 5 Purchase Link",
+                       )
+
+async def update_item(interaction: discord.Interaction, sku: str, 
+                      item_name: str | None = None, priority: str | None = None, quantity: str | None = None, order_quantity: str | None = None, 
+                      low_threshold: str | None = None, unit: str | None = None, decrease_amount: str | None = None,
+                      vendor_1: str | None = None, link_1: str | None = None, vendor_2: str | None = None, link_2: str | None = None, 
+                      vendor_3: str | None = None, link_3: str | None = None, vendor_4: str | None = None, 
+                      link_4: str | None = None, vendor_5: str | None = None, link_5: str | None = None):
+
+    updates = {
+            "NAME": item_name,
+            "PRIORITY": priority,
+            "ORDER_QUANTITY": order_quantity,
+            "TRACKING_MODE": None,
+            "QUANTITY_ON_HAND": quantity,
+            "LOW_THRESHOLD": low_threshold,
+            "LOW_THREAD_ID": None,
+            "UNIT": unit,
+            "DECREASE_AMOUNT": decrease_amount,
+            "LINK_1": link_1,
+            "VENDOR_1": vendor_1,
+            "LINK_2": link_2,
+            "VENDOR_2": vendor_2,
+            "LINK_3": link_3,
+            "VENDOR_3": vendor_3,
+            "LINK_4": link_4,
+            "VENDOR_4": vendor_4,
+            "LINK_5": link_5,
+            "VENDOR_5": vendor_5,
+            "LOW": None
+        }
+            
+    response_message = await command_handler.handler_update_item(sku, updates)
+    await interaction.response.send_message(response_message)
 
 @bot.event
 async def setup_hook():
