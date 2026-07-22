@@ -10,6 +10,11 @@ import barcode_generator, illusion_helpers
 from PIL import Image
 import os, io
 
+try:
+    import readline
+except:
+    print("readline not installed")
+
 pyproject_path = Path(__file__).resolve().parents[0] / "./pyproject.toml"
 
 with pyproject_path.open("rb") as f:

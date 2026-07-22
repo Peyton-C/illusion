@@ -1,5 +1,6 @@
 # illusion
 A janky python based inventory system + discord bot.
+Supports Linux and macOS only.
 
 ## Installation
 illusion is only supported with uv, if you have it installed, run:
