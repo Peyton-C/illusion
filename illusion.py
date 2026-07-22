@@ -610,7 +610,7 @@ async def add_item(interaction: discord.Interaction, item_name: str, priority: s
                    vendor_3: str | None = None, link_3: str | None = None, vendor_4: str | None = None, 
                    link_4: str | None = None, vendor_5: str | None = None, link_5: str | None = None):
 
-    response_message = await command_handler.handler_add_item(item_name, priority, order_quantity, "Quantity", quantity, low_threshold, unit, "1", vendor_1, link_1, 
+    response_message = await command_handler.handler_add_item(item_name, priority, order_quantity, "QUANTITY", quantity, low_threshold, unit, "1", vendor_1, link_1, 
                                                               vendor_2, link_2, vendor_3, link_3, vendor_4, link_4, vendor_5, link_5,)
 
     await interaction.response.send_message(response_message)
@@ -631,7 +631,7 @@ async def add_kanban(interaction: discord.Interaction, item_name: str, priority:
                    vendor_3: str | None = None, link_3: str | None = None, vendor_4: str | None = None, 
                    link_4: str | None = None, vendor_5: str | None = None, link_5: str | None = None):
 
-    response_message = await command_handler.handler_add_item(item_name, priority, order_quantity, "Kanban", None, None, None, None, vendor_1, link_1, 
+    response_message = await command_handler.handler_add_item(item_name, priority, order_quantity, "KANBAN", None, None, None, None, vendor_1, link_1, 
                                                               vendor_2, link_2, vendor_3, link_3, vendor_4, link_4, vendor_5, link_5,)
 
     await interaction.response.send_message(response_message)
@@ -654,7 +654,7 @@ async def add_hybrid(interaction: discord.Interaction, item_name: str, priority:
                    vendor_3: str | None = None, link_3: str | None = None, vendor_4: str | None = None, 
                    link_4: str | None = None, vendor_5: str | None = None, link_5: str | None = None):
 
-    response_message = await command_handler.handler_add_item(item_name, priority, order_quantity, "Hybrid", 
+    response_message = await command_handler.handler_add_item(item_name, priority, order_quantity, "HYBRID", 
                                                               quantity, low_threshold, unit, decrease_amount, vendor_1, link_1, 
                                                               vendor_2, link_2, vendor_3, link_3, vendor_4, link_4, vendor_5, link_5,)
 
