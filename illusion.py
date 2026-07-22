@@ -114,50 +114,6 @@ class DB_Commands:
         
         return response_message
 
-    async def handler_low(self, sku):
-        global inventory, channel
-
-        sku = illusion_helpers.clean_sku(sku)
-        if inventory.validate_sku(sku):
-            result = inventory.decrease_item(sku)
-            item = result["item"]
-
-            if result["low_changed"]:
-                thread_with_message = await channel.create_thread(
-                    name=f"{item['NAME']}: {item['SKU']}",
-                    content=illusion_helpers.make_low_thread_content(item),
-                    view=illusion_helpers.make_vendor_buttons(item),
-                )
-                thread_name = thread_with_message.thread.name
-
-                inventory.update_item(sku, {"LOW_THREAD_ID": thread_with_message.thread.id,},)
-                inventory.save()
-
-            if item["TRACKING_MODE"] == "KANBAN":
-                if result["low_changed"]:
-                    return f"{sku} marked as low, thread: {thread_name} created"
-
-                return f"{sku} already marked as low"
-            
-            unit = item["UNIT"] or "units"
-
-            response_message = (
-                f"{sku} decreased by "
-                f"{illusion_helpers.format_quantity(result['decrease_amount'])} {unit}: "
-                f"{illusion_helpers.format_quantity(result['old_quantity'])} -> "
-                f"{illusion_helpers.format_quantity(result['new_quantity'])}"
-            )
-
-            if result["low_changed"]:
-                response_message += f"\nLow threshold reached, thread: {thread_name} created"
-            elif item["LOW"]:
-                response_message += "\nItem is already marked as low."
-        else:
-            response_message = f"Invalid sku: {sku}"
-        
-        return response_message
-        
-
     async def handler_search(self, name: str):
         global inventory
 
@@ -234,6 +190,7 @@ class DB_Commands:
         else:
             response_message = f"Invalid sku: {sku}"
 
+        inventory.save()
         return response_message
     
     async def handler_increase(self, sku, amount=1):
@@ -281,6 +238,9 @@ class DB_Commands:
     async def archive_low_thread(self, sku):
         global inventory
         global bot
+
+        if not inventory.validate_sku(sku):
+            return "Invalid SKU"
 
         item = inventory.get_item(sku)
 
@@ -347,9 +307,9 @@ class DB_Commands:
         
         cleaned = {}
         
-        for value, key in updates.items():
-            if key != None:
-                cleaned[value] = key
+        for key, value in updates.items():
+            if value != None:
+                cleaned[key] = value
 
         updates = cleaned
 
@@ -374,11 +334,6 @@ class DB_Commands:
                 "COMMAND": "exit",
                 "USAGE": "exit",
                 "DESCRIPTION": "Exit illusion",
-            },
-            {
-                "COMMAND": "low",
-                "USAGE": "low <sku>",
-                "DESCRIPTION": "Mark an item as low",
             },
             {
                 "COMMAND": "resolve",
@@ -484,8 +439,6 @@ async def terminal_loop():
             
         elif parts[0].startswith("EER-") and len(parts) >= 1: # Basic bar code scanner support
             response_message = await command_handler.handler_decrease(parts[0])
-        elif command == "low" and len(parts) >= 2:
-            response_message = await command_handler.handler_low(parts[1])
         elif command == "resolve" and len(parts) >= 2:
             response_message = await command_handler.handler_resolve(parts[1])
         elif command == "delete" and len(parts) >= 2:
@@ -512,13 +465,16 @@ async def terminal_loop():
         elif command == "print_label" and config["illusion"]["printer"]["niimbot"]["enabled"] and len(parts) >= 2:
             # Awful, Awful, Awful
             # I hate this code
+            # Can't be replaced by shlex without breaking non qouted strings
             if len(parts) == 3:
                 cleaned_text = text.replace("print_label ", "")
                 if '"' in cleaned_text:
                     lines = cleaned_text.split('"')
                     if len(lines) >= 4:
                         line_2 = lines[3]
-                    line_1 = lines[1]
+                        line_1 = lines[1]
+                    else:
+                        response_message = "Invalid Qoutes"
                 else:
                     line_1 = f"{parts[1]} {parts[2]}"
                     line_2 = None
@@ -526,7 +482,8 @@ async def terminal_loop():
                 line_1 = parts[1]
                 line_2 = None
             
-            response_message = await command_handler.handler_print_label(line_1, line_2)
+            if response_message == None:
+                response_message = await command_handler.handler_print_label(line_1, line_2)
         elif command == "set" and len(parts) == 3:
             response_message = await command_handler.handler_set_stock(parts[1], parts[2])
         else:
@@ -588,12 +545,6 @@ async def resolve(interaction: discord.Interaction, sku: str | None = None):
     cleaned_sku = illusion_helpers.clean_sku(sku)
     await command_handler.archive_low_thread(cleaned_sku)
 
-@bot.tree.command(name="low", description="Mark stock as being low")
-@app_commands.describe(sku="Item Sku")
-async def low(interaction: discord.Interaction, sku: str):
-    response_message = await command_handler.handler_low(sku)
-    await interaction.response.send_message(response_message)
-
 @bot.tree.command(name="set_stock", description="Set current stock")
 @app_commands.describe(sku="Item Sku", value="Stock amount")
 async def set_stock(interaction: discord.Interaction, sku: str, value: str):
@@ -620,7 +571,7 @@ async def increase(interaction: discord.Interaction, sku: str, amount: str | Non
     cleaned_sku = illusion_helpers.clean_sku(sku)
     item = inventory.get_item(cleaned_sku)
     if item["LOW"] == False and item["LOW_THREAD_ID"] != None:
-        await command_handler.archive_low_thread(sku)
+        await command_handler.archive_low_thread(cleaned_sku)
 
 @bot.tree.command(name="info", description="Get info about an item")
 @app_commands.describe(sku="Item Sku")
@@ -659,7 +610,7 @@ async def add_item(interaction: discord.Interaction, item_name: str, priority: s
                    vendor_3: str | None = None, link_3: str | None = None, vendor_4: str | None = None, 
                    link_4: str | None = None, vendor_5: str | None = None, link_5: str | None = None):
 
-    response_message = await command_handler.handler_add_item(item_name, priority, order_quantity, "Quantity", quantity, low_threshold, unit, "1", vendor_1, link_1, 
+    response_message = await command_handler.handler_add_item(item_name, priority, order_quantity, "QUANTITY", quantity, low_threshold, unit, "1", vendor_1, link_1, 
                                                               vendor_2, link_2, vendor_3, link_3, vendor_4, link_4, vendor_5, link_5,)
 
     await interaction.response.send_message(response_message)
@@ -680,7 +631,7 @@ async def add_kanban(interaction: discord.Interaction, item_name: str, priority:
                    vendor_3: str | None = None, link_3: str | None = None, vendor_4: str | None = None, 
                    link_4: str | None = None, vendor_5: str | None = None, link_5: str | None = None):
 
-    response_message = await command_handler.handler_add_item(item_name, priority, order_quantity, "Kanban", None, None, None, None, vendor_1, link_1, 
+    response_message = await command_handler.handler_add_item(item_name, priority, order_quantity, "KANBAN", None, None, None, None, vendor_1, link_1, 
                                                               vendor_2, link_2, vendor_3, link_3, vendor_4, link_4, vendor_5, link_5,)
 
     await interaction.response.send_message(response_message)
@@ -703,7 +654,7 @@ async def add_hybrid(interaction: discord.Interaction, item_name: str, priority:
                    vendor_3: str | None = None, link_3: str | None = None, vendor_4: str | None = None, 
                    link_4: str | None = None, vendor_5: str | None = None, link_5: str | None = None):
 
-    response_message = await command_handler.handler_add_item(item_name, priority, order_quantity, "Hybrid", 
+    response_message = await command_handler.handler_add_item(item_name, priority, order_quantity, "HYBRID", 
                                                               quantity, low_threshold, unit, decrease_amount, vendor_1, link_1, 
                                                               vendor_2, link_2, vendor_3, link_3, vendor_4, link_4, vendor_5, link_5,)
 
@@ -719,7 +670,10 @@ async def search(interaction: discord.Interaction, name: str):
     if response_message.startswith("No items found"):
         await interaction.followup.send(response_message)
     else:
-        await interaction.followup.send(f"```{response_message}```")
+        if len(response_message) <= 2000:
+            await interaction.followup.send(f"```{response_message}```")
+        else:
+            await interaction.followup.send(f"I didnt feel like handling searches with > 2000 chars, if thix happens from a real search, please ping me -PC")
 
 @bot.tree.command(name="generate_barcode", description="Generate a barcode")
 @app_commands.describe(sku="Item Sku")
@@ -797,7 +751,7 @@ async def printer_info(interaction: discord.Interaction):
     response_message = illusion_helpers.niimbot_printer_info(serial_port)
     await interaction.followup.send(response_message)
 
-@bot.tree.command(name="update_item", description="Update an existing itme")
+@bot.tree.command(name="update_item", description="Update an existing item")
 @app_commands.describe(sku="Item SKU", item_name="Item Name", priority="Item Priority",
                        order_quantity="Number of units to order when stock low", unit="Unit name",
                        quantity="Number of units on hand", low_threshold="Minimum Stock", decrease_amount="Amount to decrease by",
