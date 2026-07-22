@@ -438,7 +438,7 @@ class DB_Commands:
                 ]
             )
 
-        return f"<sku> required argument\n[amount] optional argument\n\n{illusion_helpers.make_table(command_list)}\n"
+        return f"\n<sku> required argument\n[amount] optional argument\n\n{illusion_helpers.make_table(command_list)}\n"
 
 async def terminal_loop():
     await bot.wait_until_ready()
