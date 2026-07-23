@@ -9,6 +9,7 @@ from pathlib import Path
 import barcode_generator, illusion_helpers
 from PIL import Image
 import os, io
+from digikey_client import DigiKeyClient
 
 try:
     import readline
@@ -327,6 +328,49 @@ class DB_Commands:
         changed_fields = ", ".join(updates.keys())
 
         return f"Updated {sku}: {changed_fields}"
+    
+    async def handler_digikey_scan(self, barcode_text: str):
+        global inventory
+
+        try:
+            data = await asyncio.to_thread(dk.lookup_barcode, barcode_text)
+        except Exception as e:
+            return f"DigiKey lookup failed: {e}"
+
+        dkpn = data.get("DigiKeyPartNumber")
+        quantity = data.get("Quantity") or 0
+        description = data.get("ProductDescription")
+
+        if not dkpn:
+            return "Barcode didn't contain a DigiKey part number"
+
+        existing = inventory.get_item_by_dkpn(dkpn)
+
+        if existing is not None:
+            sku = existing["SKU"]
+            if existing["TRACKING_MODE"] == "KANBAN":
+                return f"{sku} matched {dkpn}, but item is KANBAN tracked"
+            if quantity > 0:
+                return await self.handler_increase(sku, quantity)
+            return f"{sku} matched {dkpn}, but barcode had no quantity"
+
+        # New part: create a QUANTITY-tracked item pre-filled from DigiKey
+        new_item = {
+            "NAME": description or dkpn,
+            "PRIORITY": "NORMAL",
+            "ORDER_QUANTITY": None,
+            "TRACKING_MODE": "QUANTITY",
+            "QUANTITY_ON_HAND": quantity,
+            "DECREASE_AMOUNT": 1,
+            "DIGIKEY_PART_NUMBER": dkpn,
+            "VENDOR_1": "DigiKey",
+            "LINK_1": f"https://www.digikey.ca/en/products/result?keywords={dkpn}",
+            "LOW": "FALSE",
+        }
+
+        new_sku = inventory.add_item(new_item)
+        inventory.save()
+        return f"New item {new_sku} created from {dkpn} with {quantity} on hand"
 
     async def handler_command_help(self):
         command_list = [
@@ -444,6 +488,8 @@ async def terminal_loop():
             
         elif parts[0].startswith("EER-") and len(parts) >= 1: # Basic bar code scanner support
             response_message = await command_handler.handler_decrease(parts[0])
+        elif text.startswith("[)>") or (text.isdigit() and len(text) > 8): # Digikey data matrix
+            response_message = await command_handler.handler_digikey_scan(text.strip().replace("|", "\u241d"))
         elif command == "resolve" and len(parts) >= 2:
             response_message = await command_handler.handler_resolve(parts[1])
         elif command == "delete" and len(parts) >= 2:
@@ -810,6 +856,12 @@ with open("./config.yaml", "r") as file:
 TOKEN = config["illusion"]["discord"]["token"]
 GUILD_ID = config["illusion"]["discord"]["server_id"]
 FORUM_CHANNEL_ID = config["illusion"]["discord"]["fourm_id"] 
+
 command_handler = DB_Commands()
 inventory = SpreadsheetManager(config["illusion"]["database_location"])
+
+# Digikey support
+if config["illusion"]["digikey"]["enabled"] == True:
+    dk = DigiKeyClient("./config.yaml")
+
 bot.run(TOKEN)

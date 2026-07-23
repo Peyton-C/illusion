@@ -1,6 +1,6 @@
 [project]
 name = "illusion"
-version = "0.4.12"
+version = "1.0.0"
 description = "The Perfect Illusion of an inventory system"
 readme = "README.md"
 requires-python = ">=3.14"
@@ -11,6 +11,7 @@ dependencies = [
     "pyserial>=3.5",
     "python-barcode>=0.16.1",
     "pyyaml>=6.0.3",
+    "requests>=2.34.2",
 ]
 
 [tool.uv.sources]

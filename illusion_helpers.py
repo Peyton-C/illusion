@@ -26,6 +26,7 @@ FIELD_NAMES = {
     "LINK_4": "Link 4",
     "VENDOR_5": "Vendor 5",
     "LINK_5": "Link 5",
+    "DIGIKEY_PART_NUMBER": "Digikey Part Num"
 }
 
 def format_quantity(value):

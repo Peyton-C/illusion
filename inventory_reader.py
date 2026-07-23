@@ -18,7 +18,7 @@ class SpreadsheetManager:
         self.default_headers = ["SKU", "NAME", "PRIORITY", "ORDER_QUANTITY", "LOW", "LOW_THREAD_ID",
                                 "TRACKING_MODE", "QUANTITY_ON_HAND", "LOW_THRESHOLD", "UNIT", "DECREASE_AMOUNT",
                                 "LINK_1", "VENDOR_1", "LINK_2", "VENDOR_2", "LINK_3", "VENDOR_3",
-                                "LINK_4", "VENDOR_4", "LINK_5","VENDOR_5",
+                                "LINK_4", "VENDOR_4", "LINK_5", "VENDOR_5", "DIGIKEY_PART_NUMBER",
         ]
 
         self.item_fields = {"SKU", "NAME", "PRIORITY", "ORDER_QUANTITY", "LOW",}
@@ -51,6 +51,19 @@ class SpreadsheetManager:
         if "low_thread_id" not in existing_columns:
             self.connection.execute(
                 "ALTER TABLE items ADD COLUMN low_thread_id INTEGER"
+            )
+        
+        # 1.0.0 migration
+        if "digikey_part_number" not in existing_columns:
+            self.connection.execute(
+                "ALTER TABLE items ADD COLUMN digikey_part_number TEXT"
+            )
+            self.connection.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_items_dkpn
+                    ON items (digikey_part_number)
+                    WHERE digikey_part_number IS NOT NULL
+                """
             )
             
     def _create_tables(self) -> None:
@@ -209,6 +222,7 @@ class SpreadsheetManager:
             "UNIT": row["unit"],
             "DECREASE_AMOUNT": row["decrease_amount"],
             "LOW_THREAD_ID": row["low_thread_id"],
+            "DIGIKEY_PART_NUMBER": row["digikey_part_number"],
         }
 
         for vendor_number in range(1, 6):
@@ -259,7 +273,7 @@ class SpreadsheetManager:
         with self.lock:
             rows = self.connection.execute(
                 """
-                SELECT sku, name, priority, order_quantity, low, tracking_mode, quantity_on_hand, low_threshold, unit, decrease_amount, low_thread_id
+                SELECT sku, name, priority, order_quantity, low, tracking_mode, quantity_on_hand, low_threshold, unit, decrease_amount, low_thread_id, digikey_part_number
                 FROM items
                 ORDER BY sku
                 """
@@ -274,7 +288,7 @@ class SpreadsheetManager:
         with self.lock:
             row = self.connection.execute(
                 """
-                SELECT sku, name, priority, order_quantity, low, tracking_mode, quantity_on_hand, low_threshold, unit, decrease_amount, low_thread_id
+                SELECT sku, name, priority, order_quantity, low, tracking_mode, quantity_on_hand, low_threshold, unit, decrease_amount, low_thread_id, digikey_part_number
                 FROM items
                 WHERE sku = ?
                 """,
@@ -308,6 +322,8 @@ class SpreadsheetManager:
                 1.0,
             )
 
+            digikey_part_number = item_data.get("DIGIKEY_PART_NUMBER")
+
             if not name:
                 raise ValueError("NAME is required.")
 
@@ -323,9 +339,10 @@ class SpreadsheetManager:
                     quantity_on_hand,
                     low_threshold,
                     unit,
-                    decrease_amount
+                    decrease_amount, 
+                    digikey_part_number
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     new_sku,
@@ -338,6 +355,7 @@ class SpreadsheetManager:
                     low_threshold,
                     unit,
                     decrease_amount,
+                    digikey_part_number
                 ),
             )
 
@@ -382,7 +400,7 @@ class SpreadsheetManager:
                 if header not in self.default_headers:
                     raise ValueError(f"Header '{header}' does not exist.")
 
-                if header in {"NAME", "PRIORITY", "ORDER_QUANTITY", "LOW", "TRACKING_MODE", "QUANTITY_ON_HAND", "LOW_THRESHOLD", "UNIT", "DECREASE_AMOUNT", "LOW_THREAD_ID"}:
+                if header in {"NAME", "PRIORITY", "ORDER_QUANTITY", "LOW", "TRACKING_MODE", "QUANTITY_ON_HAND", "LOW_THRESHOLD", "UNIT", "DECREASE_AMOUNT", "LOW_THREAD_ID", "DIGIKEY_PART_NUMBER"}:
                     item_updates[header] = value
                     continue
 
@@ -407,6 +425,7 @@ class SpreadsheetManager:
                     "UNIT": "unit",
                     "DECREASE_AMOUNT": "decrease_amount",
                     "LOW_THREAD_ID": "low_thread_id",
+                    "DIGIKEY_PART_NUMBER": "digikey_part_number",
                 }
 
 
@@ -538,7 +557,8 @@ class SpreadsheetManager:
                     low_threshold,
                     unit,
                     decrease_amount,
-                    low_thread_id
+                    low_thread_id,
+                    digikey_part_number
                 FROM items
                 WHERE sku = ?
                 """,
@@ -733,7 +753,7 @@ class SpreadsheetManager:
         with self.lock:
             rows = self.connection.execute(
                 """
-                SELECT sku, name, priority, order_quantity, low, tracking_mode, quantity_on_hand, low_threshold, unit, decrease_amount, low_thread_id
+                SELECT sku, name, priority, order_quantity, low, tracking_mode, quantity_on_hand, low_threshold, unit, decrease_amount, low_thread_id, digikey_part_number
                 FROM items
                 WHERE LOWER(name) LIKE LOWER(?) ESCAPE '\\'
                 ORDER BY
@@ -754,6 +774,15 @@ class SpreadsheetManager:
             ).fetchall()
 
             return [self._row_to_dict(row) for row in rows]
+        
+    def get_item_by_dkpn(self, dkpn: str) -> dict[str, Any] | None:
+        with self.lock:
+            row = self.connection.execute(
+                "SELECT * FROM items WHERE digikey_part_number = ?",
+                (dkpn.strip(),),
+            ).fetchone()
+            return self._row_to_dict(row) if row else None
+
 
     def save(self) -> None:
         with self.lock:
