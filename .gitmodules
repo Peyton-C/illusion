@@ -1,0 +1,12 @@
+[submodule "sgumi/third_party/sdl"]
+	path = sgumi/third_party/sdl
+	url = https://github.com/libsdl-org/SDL.git
+[submodule "sgumi/third_party/imgui"]
+	path = sgumi/third_party/imgui
+	url = https://github.com/ocornut/imgui.git
+[submodule "sgumi/third_party/json"]
+	path = sgumi/third_party/json
+	url = https://github.com/nlohmann/json.git
+[submodule "sgumi/third_party/stb"]
+	path = sgumi/third_party/stb
+	url = https://github.com/nothings/stb.git

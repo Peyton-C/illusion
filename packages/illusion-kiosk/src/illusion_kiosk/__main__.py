@@ -23,7 +23,7 @@ except ImportError:
 from illusion_core import config as illusion_config
 from illusion_core import helpers as illusion_helpers
 from illusion_core.clients import ClawsClient, LipglossClient, ServiceUnavailable
-from illusion_core.commands import DB_Commands, Rows
+from illusion_core.commands import DB_Commands, DuplicateScan, Rows
 from illusion_core import fleet
 
 illusion_version = version("illusion-kiosk")
@@ -54,6 +54,9 @@ def render(result):
     """Terminal rendering: strings pass through, Rows becomes a table."""
     if isinstance(result, Rows):
         return illusion_helpers.make_table(result.data, exclude=result.exclude)
+
+    if isinstance(result, DuplicateScan):
+        return f"{render(result.info)}\n{result.message}"
 
     return result
 
@@ -89,6 +92,11 @@ async def command_help():
             "DESCRIPTION": "Exit illusion",
         },
         {
+            "COMMAND": "clear",
+            "USAGE": "clear",
+            "DESCRIPTION": "Clear the terminal",
+        },
+        {
             "COMMAND": "resolve",
             "USAGE": "resolve <sku>",
             "DESCRIPTION": "Mark an item as not low",
@@ -119,6 +127,21 @@ async def command_help():
             "DESCRIPTION": "Add a tag to an item",
         },
         {
+            "COMMAND": "get_locations",
+            "USAGE": "get_locations",
+            "DESCRIPTION": "List every location in use",
+        },
+        {
+            "COMMAND": "where",
+            "USAGE": "where <location>",
+            "DESCRIPTION": "List the items in a location",
+        },
+        {
+            "COMMAND": "set_location",
+            "USAGE": "set_location <sku> [location]",
+            "DESCRIPTION": "Set where an item lives, no location clears it",
+        },
+        {
             "COMMAND": "increase",
             "USAGE": "increase <sku> [amount]",
             "DESCRIPTION": "Increase item stock",
@@ -132,6 +155,11 @@ async def command_help():
             "COMMAND": "set",
             "USAGE": "set <sku> <quantity>",
             "DESCRIPTION": "Set item stock",
+        },
+        {
+            "COMMAND": "rescan",
+            "USAGE": "rescan",
+            "DESCRIPTION": "Count a DigiKey bag that was just refused as already scanned",
         },
     ]
 
@@ -191,16 +219,67 @@ def terminal_print(message):
     # The input prompt has no trailing newline, so anything printed from the
     # background lands on top of it, reprint it to keep the input line intact
     print(f"\n{message}\n> ", end="", flush=True)
+    mark_activity()
 
 async def terminal_notify(event):
     # The terminal gets the plain text; the title and embed are for discord
     terminal_print(event["message"])
 
+
+# When the screen last changed, and whether anything is on it that an idle
+# clear should wipe. Without the flag an untouched kiosk would clear its
+# already empty screen every half hour for no reason.
+last_activity = time.monotonic()
+screen_dirty = True
+
+
+def mark_activity():
+    global last_activity, screen_dirty
+
+    last_activity = time.monotonic()
+    screen_dirty = True
+
+
+def print_banner():
+    print(f"illusion {illusion_version}")
+    print("ready")
+
+
+def clear_terminal():
+    global screen_dirty
+
+    # Home the cursor, clear the screen, then the scrollback too, otherwise a
+    # week of scans is still one scroll away
+    print("\033[H\033[2J\033[3J", end="")
+    print_banner()
+    screen_dirty = False
+
+
+async def idle_clear_loop():
+    """Clear the terminal once it has sat untouched for IDLE_CLEAR_SECONDS."""
+    while not shutdown_event.is_set():
+        await asyncio.sleep(IDLE_CHECK_SECONDS)
+
+        if not screen_dirty or time.monotonic() - last_activity < IDLE_CLEAR_SECONDS:
+            continue
+
+        clear_terminal()
+
+        # input() is still blocked in its thread, so reissue the prompt along
+        # with anything typed but never entered, which readline still holds
+        pending = readline.get_line_buffer() if "readline" in globals() else ""
+        print(f"> {pending}", end="", flush=True)
+
+
 async def terminal_loop():
     register_notifier(TERMINAL_REPLY_TO, terminal_notify)
 
-    print(f"illusion {illusion_version}")
-    print("ready")
+    print_banner()
+
+    # The barcode of a DigiKey bag refused as a repeat by the command just
+    # before this one. Only ever the immediately previous command, so a stray
+    # `rescan` typed later cannot count some long forgotten bag.
+    duplicate_barcode = None
 
     while not shutdown_event.is_set():
         try:
@@ -218,9 +297,13 @@ async def terminal_loop():
         if not text:
             continue
 
+        mark_activity()
+
         parts = text.split(maxsplit=2) # Make sure to update this if commands w/ 3+ fields are added
         command = parts[0].lower()
         response_message = None
+
+        pending_rescan, duplicate_barcode = duplicate_barcode, None
 
         try:
             if command == "exit" and len(parts) >= 1:
@@ -228,6 +311,9 @@ async def terminal_loop():
                 print(response_message)
                 await graceful_exit("terminal exit")
                 break
+
+            elif command == "clear" and len(parts) == 1:
+                clear_terminal()
 
             elif command == "help" and len(parts) >= 1:
                 response_message = await command_help()
@@ -260,10 +346,30 @@ async def terminal_loop():
                 response_message = render(await command_handler.handler_get_tags())
             elif command == "add_tag" and len(parts) == 3:
                 response_message = await command_handler.handler_add_tag(parts[1], parts[2])
+            elif command == "get_locations" and len(parts) >= 1:
+                response_message = render(await command_handler.handler_get_locations())
+            elif command == "where" and len(parts) >= 2:
+                # A location is several words more often than not, so take the
+                # rest of the line rather than only the next word
+                location = " ".join(" ".join(parts[1:]).split())
+                response_message = render(await command_handler.handler_search_location(location))
+            elif command == "set_location" and len(parts) >= 2:
+                location = parts[2] if len(parts) == 3 else None
+                response_message = await command_handler.handler_set_location(parts[1], location)
             elif parts[0].startswith("EER-") and len(parts) >= 1: # Basic bar code scanner support
                 response_message = await command_handler.handler_decrease(parts[0])
             elif text.startswith("[)>") or (text.isdigit() and len(text) > 8): # Digikey data matrix
-                response_message = await command_handler.handler_digikey_scan(text.strip().replace("|", "\u241d"))
+                result = await command_handler.handler_digikey_scan(text.strip().replace("|", "\u241d"))
+
+                if isinstance(result, DuplicateScan):
+                    duplicate_barcode = result.barcode
+
+                response_message = render(result)
+            elif command == "rescan" and len(parts) == 1:
+                if pending_rescan is None:
+                    response_message = "Nothing to rescan. `rescan` only works right after a DigiKey bag is refused as already scanned."
+                else:
+                    response_message = render(await command_handler.handler_digikey_scan(pending_rescan, force=True))
             elif command == "resolve" and len(parts) >= 2:
                 response_message = await command_handler.handler_resolve(parts[1])
             elif command == "delete" and len(parts) >= 2:
@@ -271,7 +377,9 @@ async def terminal_loop():
             elif command == "info" and len(parts) >= 2:
                 response_message = render(await command_handler.handler_info(parts[1]))
             elif command == "search" and len(parts) >= 2:
-                response_message = render(await command_handler.handler_search(parts[1]))
+                # join back parts and remove whitespace
+                query = " ".join(" ".join(parts[1:]).split())
+                response_message = render(await command_handler.handler_search(query))
             elif command == "decrease" and len(parts) >= 2:
                 if len(parts) == 3:
                     response_message = await command_handler.handler_decrease(parts[1], parts[2])
@@ -338,9 +446,7 @@ async def terminal_loop():
             # Fail fast: the command is simply not applied, and says so
             response_message = f"Service unavailable, command not applied.\n{e}"
         except Exception as e:
-            # One bad command must never take the terminal down with it. The
-            # kiosk is the only way to touch inventory from the closet, and a
-            # dead prompt there means someone has to go find a keyboard.
+            # One bad command must never take the terminal down with it.
             response_message = f"Command failed: {e}"
 
         if response_message != None:
@@ -425,6 +531,9 @@ async def graceful_exit(reason: str = "unknown"):
             pass
 
     for client in (claws, lipgloss):
+        if client is None:
+            continue
+
         try:
             await client.aclose()
         except Exception as e:
@@ -452,6 +561,10 @@ try:
         required += ["kiosk.lipgloss.url", "kiosk.lipgloss.token"]
 
     illusion_config.require(config, required, source=CONFIG_PATH)
+
+    illusion_config.add_defaults(config, CONFIG_PATH, {
+        "kiosk.terminal.idle_clear_minutes": 30,
+    })
 except illusion_config.ConfigError as e:
     print(e)
     raise SystemExit(1)
@@ -463,10 +576,15 @@ claws = ClawsClient(
     illusion_config.get(config, "kiosk.claws.token"),
 )
 
-lipgloss = LipglossClient(
-    illusion_config.get(config, "kiosk.lipgloss.url"),
-    illusion_config.get(config, "kiosk.lipgloss.token"),
-)
+# Its settings are only required when printing is on, and every command that
+# reaches it is gated on PRINTING_ENABLED, so there is nothing to build without
+lipgloss = None
+
+if PRINTING_ENABLED:
+    lipgloss = LipglossClient(
+        illusion_config.get(config, "kiosk.lipgloss.url"),
+        illusion_config.get(config, "kiosk.lipgloss.token"),
+    )
 
 command_handler = DB_Commands(claws, lipgloss, boot_time)
 
@@ -478,6 +596,10 @@ HOSTNAME = socket.gethostname()
 # channel back down the event stream just to answer version questions.
 HEALTH_HOST = illusion_config.get(config, "kiosk.health.host", "127.0.0.1")
 HEALTH_PORT = illusion_config.get(config, "kiosk.health.port", 8082)
+
+# 0 turns the idle clear off
+IDLE_CLEAR_SECONDS = illusion_config.get(config, "kiosk.terminal.idle_clear_minutes", 30) * 60
+IDLE_CHECK_SECONDS = 30
 
 
 async def fleet_status():
@@ -515,6 +637,9 @@ async def run():
     if PRINTING_ENABLED:
         asyncio.create_task(lipgloss_event_loop())
 
+    if IDLE_CLEAR_SECONDS:
+        asyncio.create_task(idle_clear_loop())
+
     global health_server, health_task
 
     watched = []
@@ -544,6 +669,10 @@ async def run():
 
     for task in pending:
         task.cancel()
+
+    # graceful_exit stops the health server and waits for it
+    if shutdown_event.is_set():
+        return
 
     if terminal_task not in done:
         # The health server stopped on its own, which only happens when

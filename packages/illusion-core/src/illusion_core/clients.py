@@ -8,6 +8,7 @@ risk double counting.
 """
 
 import json
+from urllib.parse import quote
 
 import httpx
 
@@ -28,6 +29,24 @@ class ServiceUnavailable(Exception):
         super().__init__(message)
         self.status_code = status_code
         self.service = service
+
+
+def error_detail(response):
+    """The service's own explanation, rather than the JSON envelope around it.
+
+    FastAPI wraps a rejection in {"detail": ...}, and these messages are read by
+    people in Discord: a preview refused for a missing line should say so, not
+    quote JSON at them.
+    """
+    try:
+        body = response.json()
+    except ValueError:
+        return response.text[:200]
+
+    if isinstance(body, dict) and "detail" in body:
+        return str(body["detail"])[:200]
+
+    return response.text[:200]
 
 
 class BaseClient:
@@ -56,7 +75,7 @@ class BaseClient:
 
             if response.status_code >= 400:
                 raise ServiceUnavailable(
-                    f"{self._name} returned {response.status_code}: {response.text[:200]}",
+                    f"{self._name} returned {response.status_code}: {error_detail(response)}",
                     status_code=response.status_code,
                     service=self._name,
                 )
@@ -128,9 +147,23 @@ class LipglossClient(BaseClient):
             "copies": copies, "source": source, "reply_to": reply_to,
         })
 
-    async def print_barcodes(self, lower, upper, source="unknown", reply_to=None):
+    async def print_barcodes(self, lower, upper, style="slim_barcode",
+                             line_1=None, line_2=None,
+                             line_1_by_sku=None, line_2_by_sku=None,
+                             source="unknown", reply_to=None):
+        # Everything after upper is keyword-defaulted so existing positional
+        # callers are unaffected, and the defaults are what the endpoint did
+        # before it took any of them. Only styles that render the SKU are
+        # accepted, and line_1/line_2 are required exactly when the style has
+        # a cell for them -- see print_barcodes in lipgloss's service.py.
+        # The _by_sku maps give individual labels their own text, for a range
+        # of items that already exist. Resolve them against claws first:
+        # lipgloss deliberately knows nothing about inventory.
         return await self.post("/print/barcodes", json={
-            "lower": lower, "upper": upper, "source": source, "reply_to": reply_to,
+            "lower": lower, "upper": upper, "style": style,
+            "line_1": line_1, "line_2": line_2,
+            "line_1_by_sku": line_1_by_sku, "line_2_by_sku": line_2_by_sku,
+            "source": source, "reply_to": reply_to,
         })
 
     async def print_image(self, image_bytes, description, copies=1,
@@ -143,6 +176,40 @@ class LipglossClient(BaseClient):
                 "source": source, **({"reply_to": reply_to} if reply_to else {}),
             },
         )
+
+    async def preview_image(self, image_bytes, scale=3, rotate=0):
+        """PNG bytes of an image as the print head would dither it.
+
+        The counterpart to print_image, and the only way to see what one bit per
+        pixel does to a picture without spending a label finding out.
+
+        rotate turns the finished dither for reading. An image is sent the way
+        the head wants it, long side down the roll; 270 gives it back the shape
+        a label is read in, which is what preview() returns for every other
+        style.
+        """
+        response = await self._request(
+            "POST",
+            "/preview/image",
+            files={"file": ("label.png", image_bytes, "image/png")},
+            data={"scale": str(scale), "rotate": str(rotate)},
+        )
+
+        return response.content
+
+    async def preview(self, style, sku=None, line_1=None, line_2=None, scale=3):
+        """PNG bytes of the label print_label would produce, same geometry and all.
+
+        Separate from render() on purpose: render takes whatever size it is
+        given, while this one is answered at the printer's own label size, which
+        is the only thing worth showing someone before they commit a roll to it.
+        """
+        response = await self._request("POST", "/preview", json={
+            "style": style, "sku": sku, "line_1": line_1, "line_2": line_2,
+            "scale": scale,
+        })
+
+        return response.content
 
     async def render(self, style="classic_barcode", sku=None, line_1=None,
                      line_2=None, width=350, height=280, rotate=0):
@@ -167,7 +234,9 @@ class LipglossClient(BaseClient):
         return (await self.post("/queue/clear"))["message"]
 
     async def cancel(self, job_id):
-        return (await self.delete(f"/queue/{job_id}"))["message"]
+        """{"cancelled": bool, "message": str}, since a job already printed is
+        not the same answer as one pulled out of the queue."""
+        return await self.delete(f"/queue/{job_id}")
 
 
 class ClawsClient(BaseClient):
@@ -216,6 +285,13 @@ class ClawsClient(BaseClient):
     async def add_tag(self, sku, tag):
         return await self.or_none("POST", f"/items/{sku}/tags", json={"tag": tag})
 
+    async def set_location(self, sku, location):
+        """The updated item and whether its location is a known one, or None
+        when there is no such sku."""
+        return await self.or_none(
+            "PUT", f"/items/{sku}/location", json={"location": location}
+        )
+
     async def add_vendor(self, sku, vendor_name, link):
         return (await self.post(
             f"/items/{sku}/vendors", json={"vendor_name": vendor_name, "link": link}
@@ -224,11 +300,62 @@ class ClawsClient(BaseClient):
     async def search(self, name, limit=10):
         return await self.get("/search", params={"name": name, "limit": limit})
 
+    async def rename_preview(self, find, replace="", case_sensitive=False):
+        """{"rejected": str} or {"changes": [{SKU, OLD_NAME, NEW_NAME}, ...]}."""
+        return await self.post("/items/rename/preview", json={
+            "find": find, "replace": replace, "case_sensitive": case_sensitive,
+        })
+
+    async def rename_apply(self, find, replace="", case_sensitive=False):
+        """Same shape as rename_preview, but written to the database.
+
+        Re-matches find/replace itself rather than being handed a list of
+        skus, so a rename confirmed after the catalogue moved on renames
+        what actually matches now.
+        """
+        return await self.post("/items/rename/apply", json={
+            "find": find, "replace": replace, "case_sensitive": case_sensitive,
+        })
+
+    async def suggest(self, query, limit=25):
+        return await self.get("/suggest", params={"query": query, "limit": limit})
+
     async def tags(self):
         return await self.get("/tags")
 
     async def items_by_tag(self, tag):
         return await self.get(f"/tags/{tag}/items")
+
+    async def tag_rename_preview(self, find, replace, case_sensitive=False):
+        """{"rejected": str} or {"changes": [{SKU, NAME, OLD_TAGS, NEW_TAGS}, ...]}."""
+        return await self.post("/tags/rename/preview", json={
+            "find": find, "replace": replace, "case_sensitive": case_sensitive,
+        })
+
+    async def tag_rename_apply(self, find, replace, case_sensitive=False):
+        """Same shape as tag_rename_preview, but written to the database.
+
+        Re-matches find/replace itself rather than being handed a list of
+        skus, so a tag added or removed after the preview was shown is
+        reflected rather than clobbered.
+        """
+        return await self.post("/tags/rename/apply", json={
+            "find": find, "replace": replace, "case_sensitive": case_sensitive,
+        })
+
+    async def locations(self):
+        return await self.get("/locations")
+
+    async def suggest_locations(self, query="", limit=25):
+        return await self.get(
+            "/locations/suggest", params={"query": query, "limit": limit}
+        )
+
+    async def items_by_location(self, location):
+        # Locations are free text off a shelf label, so "Bin Wall / bin array"
+        # is a perfectly ordinary one and its slash cannot be left to split the
+        # path into segments that match nothing
+        return await self.get(f"/locations/{quote(str(location), safe='')}/items")
 
     async def status(self):
         """The whole fleet: claws plus every service it probes."""
@@ -251,5 +378,15 @@ class ClawsClient(BaseClient):
     async def digikey_part(self, part_number):
         return await self.get(f"/digikey/part/{part_number}")
 
-    async def digikey_scan(self, barcode):
-        return await self.post("/digikey/scan", json={"barcode": barcode})
+    async def digikey_scan(self, barcode, force=False):
+        """DigiKey's data for the barcode, or {"duplicate": ...} describing the
+        last time this bag was counted, unless force is set."""
+        return await self.post("/digikey/scan", json={"barcode": barcode, "force": force})
+
+    async def record_digikey_scan(self, barcode, sku, dkpn, quantity):
+        return await self.post("/digikey/scans", json={
+            "barcode": barcode,
+            "sku": sku,
+            "digikey_part_number": dkpn,
+            "quantity": quantity,
+        })

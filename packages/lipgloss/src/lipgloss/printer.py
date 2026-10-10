@@ -61,7 +61,7 @@ def media_remaining(media_info):
     if media_info is None:
         return None
 
-    return media_info["total_len"] - media_info["used_len"]
+    return media_info["label_capacity"] - media_info["used_len"]
 
 
 def check_printer_ready(heartbeat, media_info):
@@ -129,6 +129,6 @@ def niimbot_printer_info(addr):
     if media_info != None:
         remaining_media = media_remaining(media_info)
 
-        return f"Labels left: {remaining_media}/{media_info["total_len"]}\nBattery Level: {heartbeat["powerlevel"]}/4"
+        return f"Labels left: {remaining_media}/{media_info["label_capacity"]}\nBattery Level: {heartbeat["powerlevel"]}/4"
     else:
         return "Unable to get printer info, labels might not be loaded."

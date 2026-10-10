@@ -48,6 +48,59 @@ def require(config, dotted_paths, source="config"):
         )
 
 
+def add_defaults(config, path, defaults):
+    """Write any option in defaults the config file lacks back to it.
+
+    defaults maps dotted paths to values. Lets an option added in a later
+    version show up in configs that predate it, so it can be found and tuned
+    without digging through the example file. Rewriting the file drops any
+    comments in it. The in-memory config is updated either way, and a file
+    that cannot be written only warns: a new option is never worth refusing
+    to boot over.
+    """
+    added = {dotted: value for dotted, value in defaults.items()
+             if get(config, dotted, _MISSING) is _MISSING}
+
+    if not added:
+        return
+
+    for dotted, value in added.items():
+        _set(config, dotted, value)
+
+    # Written beside it and swapped in, so dying mid write cannot leave a
+    # truncated config that stops the next boot
+    path = Path(path)
+    temp = path.with_name(f".{path.name}.tmp")
+
+    try:
+        with temp.open("w") as file:
+            yaml.safe_dump(config, file, sort_keys=False)
+
+        # It holds tokens, keep whatever permissions it was locked down to
+        temp.chmod(path.stat().st_mode)
+        temp.replace(path)
+    except OSError as e:
+        temp.unlink(missing_ok=True)
+        print(f"Could not add new options to {path}, using defaults: {e}")
+        return
+
+    for dotted, value in added.items():
+        print(f"Added {dotted}: {value} to {path}")
+
+
+def _set(config, dotted, value):
+    *parents, leaf = dotted.split(".")
+    node = config
+
+    for key in parents:
+        if not isinstance(node.get(key), dict):
+            node[key] = {}
+
+        node = node[key]
+
+    node[leaf] = value
+
+
 def load(path, required=()):
     path = Path(path)
 

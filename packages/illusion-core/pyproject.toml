@@ -1,6 +1,6 @@
 [project]
 name = "illusion-core"
-version = "1.5.3"
+version = "1.6.0"
 description = "Shared helpers and wire types for illusion, claws and lipgloss"
 requires-python = ">=3.14"
 dependencies = [

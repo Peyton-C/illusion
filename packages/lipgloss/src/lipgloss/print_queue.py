@@ -180,12 +180,18 @@ class PrintQueue:
     # Managing the queue
 
     def cancel(self, job_id):
+        """(cancelled, message).
+
+        Whether it caught the job in time is a separate answer from the text:
+        a client offering a cancel button has to tell "stopped it" from "it had
+        already printed", and sniffing the message for which is not an answer.
+        """
         for job in self._jobs:
             if job.job_id == job_id:
                 self._jobs.remove(job)
-                return f"Cancelled job {job_id}: {job.description}"
+                return True, f"Cancelled job {job_id}: {job.description}"
 
-        return f"No queued job with id {job_id}"
+        return False, f"No queued job with id {job_id}"
 
     def clear(self):
         cleared_jobs = len(self._jobs)
@@ -295,6 +301,16 @@ class PrintQueue:
             }
         )
 
+    def _finish(self, job):
+        """Drop a finished job, by identity rather than position.
+
+        The worker holds a reference across an await, and a cancel during that
+        await can have already taken the job out of the queue. A blind popleft
+        would then throw away whichever job moved up into its place.
+        """
+        if self._jobs and self._jobs[0] is job:
+            self._jobs.popleft()
+
     def _pause(self, reason):
         self._paused = True
         self._pause_reason = reason
@@ -334,7 +350,7 @@ class PrintQueue:
                 job.pages.pop(job.printed)
 
                 if job.remaining <= 0:
-                    self._jobs.popleft()
+                    self._finish(job)
 
                 self._log(f"Job {job.job_id} skipped a label, {e}")
 
@@ -347,7 +363,7 @@ class PrintQueue:
             job.printed += 1
 
             if job.remaining <= 0:
-                self._jobs.popleft()
+                self._finish(job)
 
                 self._log(f"Job {job.job_id} finished, {job.description}")
 

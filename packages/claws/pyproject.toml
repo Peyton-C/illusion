@@ -1,6 +1,6 @@
 [project]
 name = "claws"
-version = "1.5.3"
+version = "1.6.0"
 description = "Inventory service for illusion"
 requires-python = ">=3.14"
 dependencies = [
@@ -9,6 +9,7 @@ dependencies = [
     "uvicorn[standard]>=0.34",
     "pyyaml>=6.0.3",
     "requests>=2.34.2",
+    "rapidfuzz>=3.14",
 ]
 
 [project.scripts]

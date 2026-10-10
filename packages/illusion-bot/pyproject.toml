@@ -1,6 +1,6 @@
 [project]
 name = "illusion-bot"
-version = "1.5.3"
+version = "1.6.0"
 description = "illusion, the Discord bot"
 requires-python = ">=3.14"
 dependencies = [

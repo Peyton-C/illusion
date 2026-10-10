@@ -13,14 +13,22 @@ from importlib.metadata import version
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException, UploadFile, Form
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from illusion_core import config as illusion_config
 from illusion_core.uptime import service_uptime_ms, system_uptime_ms
 from lipgloss import printer
 from illusion_core.events import EventBus
-from lipgloss.label_maker import LabelMaker, LABEL_STYLES
+from lipgloss.label_maker import (
+    LabelMaker,
+    LABEL_STYLES,
+    PREVIEW_MAX_SCALE,
+    dithered_png,
+    flattened_for_print,
+    missing_values,
+    preview_png,
+)
 from lipgloss.print_queue import MAX_COPIES, PrintQueue
 from lipgloss.printer import PrinterUnavailable
 
@@ -48,6 +56,27 @@ class PrintRequest(BaseModel):
 class BarcodeRangeRequest(BaseModel):
     lower: int
     upper: int
+
+    # Optional, and defaulting to what this endpoint used to hardcode, so
+    # callers written before it existed keep working unchanged.
+    #
+    # Only styles that actually render the SKU are accepted -- see
+    # print_barcodes.
+    style: str = "slim_barcode"
+
+    # Text for the run. line_1/line_2 are the same on every label; the _by_sku
+    # maps override them for individual SKUs and are what make a range of real
+    # items each carry its own name.
+    #
+    # The maps are filled by the caller, never by this service. lipgloss does
+    # not know what a SKU means -- see the module docstring -- so anything that
+    # wants item names resolves them against claws first and sends the result.
+    # A SKU absent from a map falls back to the flat value.
+    line_1: str | None = None
+    line_2: str | None = None
+    line_1_by_sku: dict[str, str] | None = None
+    line_2_by_sku: dict[str, str] | None = None
+
     source: str = "unknown"
     reply_to: str | None = None
 
@@ -60,6 +89,16 @@ class RenderRequest(BaseModel):
     width: int = BARCODE_WIDTH
     height: int = BARCODE_HEIGHT
     rotate: int = 0
+
+
+class PreviewRequest(BaseModel):
+    """The print fields, minus everything about actually printing."""
+
+    style: str
+    sku: str | None = None
+    line_1: str | None = None
+    line_2: str | None = None
+    scale: int = Field(default=3, ge=1, le=PREVIEW_MAX_SCALE)
 
 
 def create_app(config_path="./lipgloss.yaml"):
@@ -108,6 +147,37 @@ def create_app(config_path="./lipgloss.yaml"):
         # overwrite one still waiting to be printed
         return str(output_dir / f"{prefix}_{time.time_ns()}")
 
+    def _render_printable(style, sku, line_1, line_2, prefix, rotate=90):
+        """The one place a printable label is rendered.
+
+        /print and /preview both come through here, so a preview cannot quietly
+        drift from what the printer is handed: same style, same geometry, and
+        the only difference is the quarter turn the printer needs and a person
+        reading it does not.
+        """
+        if style not in LABEL_STYLES:
+            raise HTTPException(status_code=400, detail=f"unknown style: {style}")
+
+        missing = missing_values(
+            style, {"sku": sku, "input_text_1": line_1, "input_text_2": line_2}
+        )
+
+        if missing:
+            raise HTTPException(
+                status_code=400, detail=f"{style} needs {', '.join(missing)}"
+            )
+
+        return labelmaker.render_label(
+            style_name=style,
+            input_text_1=line_1,
+            input_text_2=line_2,
+            sku=sku,
+            width=LABEL_WIDTH,
+            height=LABEL_HEIGHT,
+            rotate=rotate,
+            output=_label_path(prefix),
+        )
+
     # Health is deliberately unauthenticated so claws can report liveness even
     # if the shared token is rotated on one side only
     @app.get("/health")
@@ -131,17 +201,8 @@ def create_app(config_path="./lipgloss.yaml"):
 
     @app.post("/print", dependencies=[Depends(require_token)])
     async def print_label(request: PrintRequest):
-        if request.style not in LABEL_STYLES:
-            raise HTTPException(status_code=400, detail=f"unknown style: {request.style}")
-
-        output = labelmaker.render_label(
-            style_name=request.style,
-            input_text_1=request.line_1,
-            input_text_2=request.line_2,
-            sku=request.sku,
-            width=LABEL_WIDTH,
-            height=LABEL_HEIGHT,
-            output=_label_path("label"),
+        output = _render_printable(
+            request.style, request.sku, request.line_1, request.line_2, "label"
         )
 
         if request.sku and request.line_1:
@@ -161,12 +222,64 @@ def create_app(config_path="./lipgloss.yaml"):
             source=request.source,
         )
 
-        return {"job_id": job.job_id if job else None, "message": message}
+        # A job accepted onto a paused queue is not printing, and a caller
+        # showing the label back to whoever asked for it should not say it is
+        return {
+            "job_id": job.job_id if job else None,
+            "message": message,
+            "paused": printqueue.paused,
+        }
 
     @app.post("/print/barcodes", dependencies=[Depends(require_token)])
     async def print_barcodes(request: BarcodeRangeRequest):
         if request.upper < request.lower:
             return {"job_id": None, "message": f"{request.lower} is higher than {request.upper}"}
+
+        if request.style not in LABEL_STYLES:
+            return {"job_id": None, "message": f"Unknown style: {request.style}"}
+
+        # Which cells the style has decides what this can fill in. A style with
+        # no SKU cell would print the same label for every number in the range,
+        # which is never what someone asking for a range of SKUs wanted.
+        fields = {cell["value"] for cell in LABEL_STYLES[request.style]["cells"]}
+
+        if "sku" not in fields:
+            return {
+                "job_id": None,
+                "message": (
+                    f"{request.style} does not put the SKU on the label, so "
+                    "every label in the range would come out identical."
+                ),
+            }
+
+        def _sku(number):
+            return f"EER-{number:06d}"
+
+        def _text(sku, by_sku, flat):
+            """This label's text: its own if the caller gave it one, else the
+            run's."""
+            return (by_sku or {}).get(sku) or flat
+
+        # Checked across the whole range rather than once, because the _by_sku
+        # maps mean different labels can be missing different things. The SKU
+        # is stood in for since it is supplied per label below.
+        for number in range(request.lower, request.upper + 1):
+            sku = _sku(number)
+
+            missing = missing_values(
+                request.style,
+                {
+                    "sku": "per-label",
+                    "input_text_1": _text(sku, request.line_1_by_sku, request.line_1),
+                    "input_text_2": _text(sku, request.line_2_by_sku, request.line_2),
+                },
+            )
+
+            if missing:
+                return {
+                    "job_id": None,
+                    "message": f"{request.style} needs {', '.join(missing)} for {sku}",
+                }
 
         total_prints = request.upper - request.lower + 1
 
@@ -199,14 +312,25 @@ def create_app(config_path="./lipgloss.yaml"):
                 ),
             }
 
-        pages = [
-            labelmaker.render_label(
-                style_name="slim_barcode",
-                width=LABEL_WIDTH,
-                height=LABEL_HEIGHT,
-                output=str(output_dir / f"barcode_EER-{number:06d}"),
-                sku=f"EER-{number:06d}",
+        def _range_label(number):
+            """One label of the run.
+
+            Routed through _render_printable rather than rendering here, so a
+            range gets the same geometry and the same style checks a single
+            print does.
+            """
+            sku = _sku(number)
+
+            return _render_printable(
+                request.style,
+                sku,
+                _text(sku, request.line_1_by_sku, request.line_1),
+                _text(sku, request.line_2_by_sku, request.line_2),
+                f"barcode_{sku}",
             )
+
+        pages = [
+            _range_label(number)
             for number in range(request.lower, request.upper + 1)
         ]
 
@@ -227,13 +351,74 @@ def create_app(config_path="./lipgloss.yaml"):
         reply_to: str | None = Form(default=None),
     ):
         path = Path(_label_path("image") + ".png")
-        path.write_bytes(await file.read())
+
+        # Composited onto white rather than written through untouched. The head
+        # has no alpha channel and niimprint does not look for one, so a logo
+        # on a transparent background would otherwise burn the whole label.
+        # /preview/image flattens through the same helper, so what was looked at
+        # is what comes out.
+        try:
+            flattened_for_print(await file.read()).save(path, format="PNG")
+        except OSError as e:
+            raise HTTPException(status_code=422, detail=f"unreadable image: {e}")
 
         job, message = printqueue.add(
             str(path), description[:60], copies=copies, reply_to=reply_to, source=source
         )
 
         return {"job_id": job.job_id if job else None, "message": message}
+
+    @app.post("/preview", dependencies=[Depends(require_token)])
+    async def preview(request: PreviewRequest):
+        """The label /print would make, blown up for a screen, printing nothing.
+
+        Unrotated and scaled up, because this one is for a person to look at,
+        and thrown away as soon as it has been encoded: a preview that is never
+        queued has no reason to sit in the label directory.
+        """
+        output = _render_printable(
+            request.style,
+            request.sku,
+            request.line_1,
+            request.line_2,
+            "preview",
+            rotate=0,
+        )
+
+        try:
+            return Response(content=preview_png(output, request.scale), media_type="image/png")
+        finally:
+            Path(output).unlink(missing_ok=True)
+
+    @app.post("/preview/image", dependencies=[Depends(require_token)])
+    async def preview_image(
+        file: UploadFile,
+        scale: int = Form(default=3),
+        rotate: int = Form(default=0),
+    ):
+        """An uploaded image as the printer would lay it down, printing nothing.
+
+        The counterpart to /preview, for the one kind of label this service does
+        not render: /print/image hands the bytes to the print head untouched, so
+        without this there is no way to find out what the dithering does to a
+        picture except to spend a label on it.
+
+        rotate turns the answer for reading, not for printing. An image arrives
+        here the way the head wants it -- 96 across and 320 long -- and a label
+        is read the other way round, so a caller showing one beside a rendered
+        preview asks for 270 and gets the same shape /preview returns.
+
+        Nothing is written to disk. Unlike /print/image there is no job at the
+        end of this, so there is nothing for a file to outlive.
+        """
+        try:
+            content = dithered_png(await file.read(), scale, rotate)
+        except OSError as e:
+            # UnidentifiedImageError is an OSError, and so is a truncated file.
+            # Both are the caller's problem rather than this service's.
+            raise HTTPException(status_code=422, detail=f"unreadable image: {e}")
+
+        return Response(content=content, media_type="image/png")
 
     @app.post("/render", dependencies=[Depends(require_token)])
     async def render(request: RenderRequest):
@@ -264,7 +449,9 @@ def create_app(config_path="./lipgloss.yaml"):
 
     @app.delete("/queue/{job_id}", dependencies=[Depends(require_token)])
     async def cancel(job_id: int):
-        return {"message": printqueue.cancel(job_id)}
+        cancelled, message = printqueue.cancel(job_id)
+
+        return {"cancelled": cancelled, "message": message}
 
     @app.get("/events", dependencies=[Depends(require_token)])
     async def event_stream():

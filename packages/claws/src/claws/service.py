@@ -27,6 +27,7 @@ from illusion_core.fleet import (
     health_payload,
 )
 from illusion_core.uptime import service_uptime_ms, system_uptime_ms
+from claws import locations
 from claws.digikey_client import DigiKeyClient
 from claws.inventory_reader import SpreadsheetManager
 
@@ -56,9 +57,19 @@ class TagRequest(BaseModel):
     tag: str
 
 
+class LocationRequest(BaseModel):
+    location: str | None = None
+
+
 class VendorRequest(BaseModel):
     vendor_name: str
     link: str
+
+
+class RenameRequest(BaseModel):
+    find: str
+    replace: str = ""
+    case_sensitive: bool = False
 
 
 class LowThread(BaseModel):
@@ -67,6 +78,15 @@ class LowThread(BaseModel):
 
 class ScanRequest(BaseModel):
     barcode: str
+    # Look the bag up even if it has been counted before
+    force: bool = False
+
+
+class ScanRecord(BaseModel):
+    barcode: str
+    sku: str
+    digikey_part_number: str | None = None
+    quantity: float | None = None
 
 
 class Registration(BaseModel):
@@ -171,6 +191,26 @@ def fields_problem(tracking_mode, values, sku=None):
     requirement = "must be a whole number" if len(bad) == 1 else "must be whole numbers"
 
     return f"{subject} is tracked per item, so {' and '.join(bad)} {requirement}. {FRACTION_HINT}"
+
+
+def rename_problem(changes):
+    """Whether this batch of renames is safe to write, as a reason or None.
+
+    The one thing a substring replace can do that nothing else here can undo
+    cleanly is blank out a name entirely (replacing "Capasiter" with "" on an
+    item named exactly that). Caught here rather than left to the NAME NOT
+    NULL constraint, which would fail the whole batch with a database error
+    instead of saying which items caused it.
+    """
+    blank = [change for change in changes if not change["NEW_NAME"].strip()]
+
+    if not blank:
+        return None
+
+    skus = ", ".join(change["SKU"] for change in blank[:5])
+    more = "" if len(blank) <= 5 else f", and {len(blank) - 5} more"
+
+    return f"That would blank the name of {skus}{more}. Refusing."
 
 
 def create_app(config_path="./claws.yaml"):
@@ -489,6 +529,26 @@ def create_app(config_path="./claws.yaml"):
 
         return {"added": inventory.add_tag(sku, request.tag)}
 
+    @app.get("/items/{sku}/location", dependencies=auth)
+    async def item_location(sku: str):
+        return {"location": _item_or_404(sku)["LOCATION"]}
+
+    # A location is one value rather than a list, so it is set rather than added,
+    # and an empty one clears it
+    @app.put("/items/{sku}/location", dependencies=auth)
+    async def set_location(sku: str, request: LocationRequest):
+        _item_or_404(sku)
+
+        inventory.set_location(sku, request.location)
+        inventory.save()
+
+        item = inventory.get_item(sku)
+
+        # Whether it landed on a shelf that exists. A location off the
+        # catalogue is allowed, but it is worth telling whoever typed it, since
+        # at that point it is as likely to be a typo as a new shelf.
+        return {"item": item, "known": locations.is_known(item["LOCATION"])}
+
     @app.post("/items/{sku}/vendors", dependencies=auth)
     async def add_vendor(sku: str, request: VendorRequest):
         _item_or_404(sku)
@@ -499,6 +559,43 @@ def create_app(config_path="./claws.yaml"):
     async def search(name: str, limit: int = 10):
         return inventory.search_items(name, limit=limit)
 
+    @app.post("/items/rename/preview", dependencies=auth)
+    async def rename_preview(request: RenameRequest):
+        if not request.find.strip():
+            return {"rejected": "Give some text to find in item names."}
+
+        changes = inventory.preview_rename(request.find, request.replace, request.case_sensitive)
+        problem = rename_problem(changes)
+
+        if problem:
+            return {"rejected": problem}
+
+        return {"changes": changes}
+
+    @app.post("/items/rename/apply", dependencies=auth)
+    async def rename_apply(request: RenameRequest):
+        """Re-matches rather than trusting a list of skus from a prior preview,
+        so a rename confirmed minutes later reflects the catalogue as it is
+        now, not as it was when the preview was shown."""
+        if not request.find.strip():
+            return {"rejected": "Give some text to find in item names."}
+
+        changes = inventory.preview_rename(request.find, request.replace, request.case_sensitive)
+        problem = rename_problem(changes)
+
+        if problem:
+            return {"rejected": problem}
+
+        if changes:
+            inventory.apply_rename(changes)
+            inventory.save()
+
+        return {"changes": changes}
+
+    @app.get("/suggest", dependencies=auth)
+    async def suggest(query: str = "", limit: int = 25):
+        return inventory.suggest_items(query, limit=limit)
+
     @app.get("/tags", dependencies=auth)
     async def tags():
         return inventory.get_tags()
@@ -507,10 +604,65 @@ def create_app(config_path="./claws.yaml"):
     async def items_by_tag(tag: str):
         return inventory.get_items_by_tag(tag)
 
+    @app.post("/tags/rename/preview", dependencies=auth)
+    async def tag_rename_preview(request: RenameRequest):
+        if not request.find.strip():
+            return {"rejected": "Give a tag to find."}
+
+        if not request.replace.strip():
+            return {"rejected": "Give a tag to rename it to."}
+
+        changes = inventory.preview_tag_rename(request.find, request.replace, request.case_sensitive)
+
+        return {"changes": changes}
+
+    @app.post("/tags/rename/apply", dependencies=auth)
+    async def tag_rename_apply(request: RenameRequest):
+        """Re-matches rather than trusting a list of skus from a prior preview,
+        for the same reason /items/rename/apply does: a tag added or removed
+        in the gap between the preview and the confirm is reflected rather
+        than clobbered."""
+        if not request.find.strip():
+            return {"rejected": "Give a tag to find."}
+
+        if not request.replace.strip():
+            return {"rejected": "Give a tag to rename it to."}
+
+        changes = inventory.preview_tag_rename(request.find, request.replace, request.case_sensitive)
+
+        if changes:
+            inventory.apply_tag_rename(changes)
+            inventory.save()
+
+        return {"changes": changes}
+
+    @app.get("/locations", dependencies=auth)
+    async def all_locations():
+        return inventory.get_locations()
+
+    # Before the {location:path} route below, which would otherwise swallow it
+    @app.get("/locations/suggest", dependencies=auth)
+    async def suggest_locations(query: str = "", limit: int = 25):
+        return inventory.suggest_locations(query, limit=limit)
+
+    # :path because a location is free text off a shelf label, and "Acrylic /
+    # Polycarbonate Scrap" is one location rather than two path segments
+    @app.get("/locations/{location:path}/items", dependencies=auth)
+    async def items_by_location(location: str):
+        return inventory.get_items_by_location(location)
+
     @app.post("/digikey/scan", dependencies=auth)
     async def digikey_scan(request: ScanRequest):
         if digikey is None:
             raise HTTPException(status_code=503, detail="DigiKey support is not enabled")
+
+        # Checked before DigiKey is asked, so a repeat scan costs no API call
+        # and is still caught while DigiKey is down
+        if not request.force:
+            previous = inventory.get_digikey_scan(request.barcode)
+
+            if previous is not None:
+                return {"duplicate": previous}
 
         try:
             data = await asyncio.to_thread(digikey.lookup_barcode, request.barcode)
@@ -518,6 +670,19 @@ def create_app(config_path="./claws.yaml"):
             raise HTTPException(status_code=502, detail=f"DigiKey lookup failed: {e}")
 
         return data
+
+    # Separate from /digikey/scan because the stock change happens in between,
+    # through the ordinary item routes. A bag is only recorded once its stock
+    # has actually landed, so a scan that failed can simply be scanned again.
+    @app.post("/digikey/scans", dependencies=auth)
+    async def record_digikey_scan(request: ScanRecord):
+        _item_or_404(request.sku)
+
+        inventory.record_digikey_scan(
+            request.barcode, request.sku, request.digikey_part_number, request.quantity
+        )
+
+        return {"recorded": True}
 
     @app.get("/digikey/part/{part_number:path}", dependencies=auth)
     async def digikey_part(part_number: str):

@@ -10,6 +10,8 @@ kiosk:
     # every interface exposes this to whoever else is on it.
     host: 100.x.y.z
     port: 8082
+  terminal:
+    idle_clear_minutes: 30       # clear the screen after this long idle, 0 disables
   printer:
     enabled: true                # gates the print commands
   lipgloss:

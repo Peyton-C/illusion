@@ -1,5 +1,5 @@
 # illusion
-A janky python based inventory system + discord bot.
+Eastern Edge's janky python based inventory system + discord bot.
 Supports Linux and macOS only.
 
 ## Layout
