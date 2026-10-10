@@ -110,7 +110,9 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer cmake --build sgumi/bui
 cmake --install sgumi/build --prefix ~/.local
 ```
 
-On Linux that puts `sgumi` in `bin/`, a `.desktop` file in `share/applications/` and, if an icon exists, the PNG into the hicolor icon theme, which is what gives the window a name and an icon in the xfce taskbar rather than a generic placeholder.
+On Linux that puts `sgumi` in `bin/`, a `.desktop` file in `share/applications/` and, if an icon exists, its PNGs into the hicolor icon theme at 48, 128, 256 and 512, which is what gives the launcher a name and an icon in xfce rather than a generic placeholder. The icon in the window's own title bar does not come from there: the 128 is compiled into the executable and set on the window at startup.
+
+After installing over an older copy, refresh the icon cache (`gtk-update-icon-cache -f <prefix>/share/icons/hicolor`) and log out and back in, or xfce may keep showing the previous icon.
 
 ## Troubleshooting
 

@@ -182,8 +182,10 @@ endif()
 #                                  size set is committed anywhere.
 #   assets/${SGUMI_ICON_NAME}/${SGUMI_ICON_NAME}.png
 #                                  1024x1024. The macOS fallback.
-#   assets/${SGUMI_ICON_NAME}/${SGUMI_ICON_NAME}-512.png
-#                                  512x512. Linux, installed into hicolor.
+#   assets/${SGUMI_ICON_NAME}/${SGUMI_ICON_NAME}-<size>.png
+#                                  48, 128, 256 and 512 square. Linux, each
+#                                  installed into hicolor; the 128 is also
+#                                  compiled in as the window's own icon.
 #   assets/${SGUMI_ICON_NAME}/${SGUMI_ICON_NAME}.ico
 #                                  Windows, compiled into the .exe.
 #
@@ -205,7 +207,7 @@ set(SGUMI_ASSETS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../assets)
 set(SGUMI_ICON_DIR ${SGUMI_ASSETS_DIR}/${SGUMI_ICON_NAME})
 set(SGUMI_ICON_ICON ${SGUMI_ICON_DIR}/${SGUMI_ICON_NAME}.icon)
 set(SGUMI_ICON_PNG ${SGUMI_ICON_DIR}/${SGUMI_ICON_NAME}.png)
-set(SGUMI_ICON_PNG_512 ${SGUMI_ICON_DIR}/${SGUMI_ICON_NAME}-512.png)
+set(SGUMI_ICON_PNG_SIZES 48 128 256 512)
 set(SGUMI_ICON_ICO ${SGUMI_ICON_DIR}/${SGUMI_ICON_NAME}.ico)
 
 if(APPLE)
@@ -404,14 +406,52 @@ elseif(UNIX)
   install(FILES ${SGUMI_DESKTOP}
     DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)
 
-  if(EXISTS ${SGUMI_ICON_PNG_512})
-    # hicolor/512x512 rather than a pixmaps drop: the icon theme spec is what
-    # xfce actually searches, and the filename has to match Icon= above. The
-    # image has to really be 512x512 too -- the 1024 master dropped in here
-    # did not show up under xfce.
-    install(FILES ${SGUMI_ICON_PNG_512}
-      DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/512x512/apps
-      RENAME sgumi.png)
+  # hicolor/<size> rather than a pixmaps drop: the icon theme spec is what
+  # xfce actually searches, and the filename has to match Icon= above. Each
+  # image has to really be the size its directory claims -- the 1024 master
+  # dropped into 512x512 did not show up under xfce.
+  #
+  # Several sizes rather than only the largest, so a lookup for a small slot
+  # has something near it to start from instead of a 512 to shrink.
+  foreach(SIZE ${SGUMI_ICON_PNG_SIZES})
+    set(SGUMI_ICON_PNG_SIZED ${SGUMI_ICON_DIR}/${SGUMI_ICON_NAME}-${SIZE}.png)
+
+    if(EXISTS ${SGUMI_ICON_PNG_SIZED})
+      install(FILES ${SGUMI_ICON_PNG_SIZED}
+        DESTINATION
+          ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/${SIZE}x${SIZE}/apps
+        RENAME sgumi.png)
+    endif()
+  endforeach()
+
+  # The icon in the window's own title bar is a separate matter from all of
+  # the above. xfwm draws that one from _NET_WM_ICON, a property the app sets
+  # on its window, and with none set it fell back to the theme and showed a
+  # cropped corner of the icon. So the PNG is compiled in and main.cpp hands
+  # it to SDL_SetWindowIcon; see cmake/embed_file.cmake.
+  #
+  # 128 because X11 takes a single image and the window manager scales it to
+  # whatever it is drawing: enough for the alt-tab switcher, and still a clean
+  # reduction to the 16px title bar.
+  set(SGUMI_WINDOW_ICON_PNG ${SGUMI_ICON_DIR}/${SGUMI_ICON_NAME}-128.png)
+
+  if(EXISTS ${SGUMI_WINDOW_ICON_PNG})
+    set(SGUMI_WINDOW_ICON_H ${BUILD_INFO_DIR}/window_icon.h)
+
+    add_custom_command(
+      OUTPUT ${SGUMI_WINDOW_ICON_H}
+      COMMAND ${CMAKE_COMMAND}
+              -DINPUT=${SGUMI_WINDOW_ICON_PNG}
+              -DOUTPUT=${SGUMI_WINDOW_ICON_H}
+              -DSYMBOL=kWindowIconPng
+              -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_file.cmake
+      DEPENDS ${SGUMI_WINDOW_ICON_PNG}
+              ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_file.cmake
+      COMMENT "Embedding ${SGUMI_ICON_NAME}-128.png as the window icon"
+    )
+
+    target_sources(sgumi PRIVATE ${SGUMI_WINDOW_ICON_H})
+    target_compile_definitions(sgumi PRIVATE SGUMI_WINDOW_ICON=1)
   endif()
 endif()
 
