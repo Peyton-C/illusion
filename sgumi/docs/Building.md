@@ -7,7 +7,8 @@ SDL, Dear ImGui, nlohmann/json and stb are vendored as submodules under `sgumi/t
 ### Alpine
 ```sh
 doas apk add build-base cmake git pkgconf curl-dev \
-    mesa-dev mesa-vulkan-ati mesa-vulkan-intel vulkan-loader \
+    mesa-dev vulkan-loader libxscrnsaver-dev libxtst-dev \
+    mesa-vulkan-ati mesa-vulkan-intel åmesa-vulkan-nouveau mesa-vulkan-swrast \
     libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev \
     libxkbcommon-dev wayland-dev
 ```

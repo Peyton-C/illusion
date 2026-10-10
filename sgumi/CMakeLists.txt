@@ -181,7 +181,9 @@ endif()
 #                                  every size the OS wants, so no hand-exported
 #                                  size set is committed anywhere.
 #   assets/${SGUMI_ICON_NAME}/${SGUMI_ICON_NAME}.png
-#                                  1024x1024. Linux, and the macOS fallback.
+#                                  1024x1024. The macOS fallback.
+#   assets/${SGUMI_ICON_NAME}/${SGUMI_ICON_NAME}-512.png
+#                                  512x512. Linux, installed into hicolor.
 #   assets/${SGUMI_ICON_NAME}/${SGUMI_ICON_NAME}.ico
 #                                  Windows, compiled into the .exe.
 #
@@ -203,6 +205,7 @@ set(SGUMI_ASSETS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../assets)
 set(SGUMI_ICON_DIR ${SGUMI_ASSETS_DIR}/${SGUMI_ICON_NAME})
 set(SGUMI_ICON_ICON ${SGUMI_ICON_DIR}/${SGUMI_ICON_NAME}.icon)
 set(SGUMI_ICON_PNG ${SGUMI_ICON_DIR}/${SGUMI_ICON_NAME}.png)
+set(SGUMI_ICON_PNG_512 ${SGUMI_ICON_DIR}/${SGUMI_ICON_NAME}-512.png)
 set(SGUMI_ICON_ICO ${SGUMI_ICON_DIR}/${SGUMI_ICON_NAME}.ico)
 
 if(APPLE)
@@ -401,10 +404,12 @@ elseif(UNIX)
   install(FILES ${SGUMI_DESKTOP}
     DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)
 
-  if(EXISTS ${SGUMI_ICON_PNG})
+  if(EXISTS ${SGUMI_ICON_PNG_512})
     # hicolor/512x512 rather than a pixmaps drop: the icon theme spec is what
-    # xfce actually searches, and the filename has to match Icon= above.
-    install(FILES ${SGUMI_ICON_PNG}
+    # xfce actually searches, and the filename has to match Icon= above. The
+    # image has to really be 512x512 too -- the 1024 master dropped in here
+    # did not show up under xfce.
+    install(FILES ${SGUMI_ICON_PNG_512}
       DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/512x512/apps
       RENAME sgumi.png)
   endif()
