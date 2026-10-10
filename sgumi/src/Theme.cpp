@@ -358,7 +358,7 @@ void loadUiFont() {
         "C:\\Windows\\Fonts\\segoeui.ttf",
         "C:\\Windows\\Fonts\\arial.ttf",
 #else
-        "/usr/share/fonts/adwaita-mono-fonts/AdwaitaMono-Regular.ttf"
+        "/usr/share/fonts/adwaita-mono-fonts/AdwaitaMono-Regular.ttf",
         "/usr/share/fonts/open-sans/OpenSans-Regular.ttf",
         "/usr/share/fonts/google-droid-sans-fonts/DroidSans.ttf",
         "/usr/share/fonts/google-noto/NotoSansMath-Regular.ttf",
@@ -368,6 +368,8 @@ void loadUiFont() {
         "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
         "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
         "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        "/usr/share/fonts/roboto/Roboto-Medium.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSans.ttf",
 #endif
     };
 
