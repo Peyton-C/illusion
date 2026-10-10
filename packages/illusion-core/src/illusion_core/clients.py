@@ -147,9 +147,23 @@ class LipglossClient(BaseClient):
             "copies": copies, "source": source, "reply_to": reply_to,
         })
 
-    async def print_barcodes(self, lower, upper, source="unknown", reply_to=None):
+    async def print_barcodes(self, lower, upper, style="slim_barcode",
+                             line_1=None, line_2=None,
+                             line_1_by_sku=None, line_2_by_sku=None,
+                             source="unknown", reply_to=None):
+        # Everything after upper is keyword-defaulted so existing positional
+        # callers are unaffected, and the defaults are what the endpoint did
+        # before it took any of them. Only styles that render the SKU are
+        # accepted, and line_1/line_2 are required exactly when the style has
+        # a cell for them -- see print_barcodes in lipgloss's service.py.
+        # The _by_sku maps give individual labels their own text, for a range
+        # of items that already exist. Resolve them against claws first:
+        # lipgloss deliberately knows nothing about inventory.
         return await self.post("/print/barcodes", json={
-            "lower": lower, "upper": upper, "source": source, "reply_to": reply_to,
+            "lower": lower, "upper": upper, "style": style,
+            "line_1": line_1, "line_2": line_2,
+            "line_1_by_sku": line_1_by_sku, "line_2_by_sku": line_2_by_sku,
+            "source": source, "reply_to": reply_to,
         })
 
     async def print_image(self, image_bytes, description, copies=1,
@@ -162,6 +176,26 @@ class LipglossClient(BaseClient):
                 "source": source, **({"reply_to": reply_to} if reply_to else {}),
             },
         )
+
+    async def preview_image(self, image_bytes, scale=3, rotate=0):
+        """PNG bytes of an image as the print head would dither it.
+
+        The counterpart to print_image, and the only way to see what one bit per
+        pixel does to a picture without spending a label finding out.
+
+        rotate turns the finished dither for reading. An image is sent the way
+        the head wants it, long side down the roll; 270 gives it back the shape
+        a label is read in, which is what preview() returns for every other
+        style.
+        """
+        response = await self._request(
+            "POST",
+            "/preview/image",
+            files={"file": ("label.png", image_bytes, "image/png")},
+            data={"scale": str(scale), "rotate": str(rotate)},
+        )
+
+        return response.content
 
     async def preview(self, style, sku=None, line_1=None, line_2=None, scale=3):
         """PNG bytes of the label print_label would produce, same geometry and all.

@@ -38,6 +38,88 @@ def preview_png(path, scale=3) -> bytes:
     return buffer.getvalue()
 
 
+def flattened_for_print(data):
+    """An uploaded image as the print head should see it: RGB, on white paper.
+
+    The head is one bit per pixel and knows nothing about alpha, and niimprint
+    reaches it through convert("L"), which drops the alpha channel without
+    consulting it. A logo on a transparent background therefore arrives as RGB
+    black across its whole canvas and burns the entire label -- the one case
+    where doing nothing to an uploaded image is not the neutral choice.
+
+    Compositing onto white first is what makes such a PNG print the way it
+    looks. An image with no alpha comes through this unchanged.
+    """
+    with Image.open(BytesIO(data)) as source:
+        image = source.convert("RGBA")
+
+    paper = Image.new("RGB", image.size, "white")
+    paper.paste(image, mask=image.getchannel("A"))
+
+    return paper
+
+
+def dithered_png(data, scale=3, rotate=0) -> bytes:
+    """An uploaded image as the print head will actually lay it down.
+
+    The printer is one bit per pixel. niimprint gets there with
+
+        ImageOps.invert(image.convert("L")).convert("1")
+
+    and PIL's convert("1") dithers with Floyd-Steinberg unless it is told not
+    to, so a photograph prints as a field of dots. Which dots, and whether the
+    result is still recognisable at 96 pixels across, is not something anyone
+    can work out by looking at the original.
+
+    That line is reproduced here rather than approximated, so the dots below are
+    the dots that get printed. The second invert is only for the viewer: the
+    printer's convention is that a set bit burns, and a preview where ink came
+    out white would be a strange thing to look at.
+
+    Flattened through the same helper /print/image uses, which is what keeps
+    this a preview rather than a second opinion.
+
+    rotate turns the finished dither for someone to look at, the way /preview
+    renders a label unrotated for the same reason. It is applied after the
+    conversion and never before: error diffusion runs left to right and top to
+    bottom, so dithering a turned image would produce a genuinely different set
+    of dots from the ones the printer is going to lay down. Turning the result
+    moves the dots without changing which ones they are.
+    """
+    printed = ImageOps.invert(flattened_for_print(data).convert("L")).convert("1")
+
+    # Back through L because ImageOps.invert has nothing to say about mode "1".
+    visible = ImageOps.invert(printed.convert("L"))
+
+    # transpose rather than rotate: these are the four exact quarter turns, and
+    # they move pixels without going near a resampling filter that could smear
+    # a one bit image.
+    turns = {
+        90: Image.Transpose.ROTATE_90,
+        180: Image.Transpose.ROTATE_180,
+        270: Image.Transpose.ROTATE_270,
+    }
+
+    if rotate % 360 in turns:
+        visible = visible.transpose(turns[rotate % 360])
+
+    # Nearest neighbour for the same reason preview_png uses it, only more so:
+    # a smooth resample would average the dither back into the grey it was made
+    # out of, which is precisely the thing being checked.
+    scale = max(1, min(int(scale), PREVIEW_MAX_SCALE))
+    scaled = visible.convert("RGB").resize(
+        (visible.width * scale, visible.height * scale),
+        Image.Resampling.NEAREST,
+    )
+
+    framed = ImageOps.expand(scaled, border=1, fill=PREVIEW_BORDER_COLOUR)
+
+    buffer = BytesIO()
+    framed.save(buffer, format="PNG")
+
+    return buffer.getvalue()
+
+
 LABEL_STYLES = {
     "slim_barcode": {
         "columns": [1, 25], # Values > 1 directly map to pixels

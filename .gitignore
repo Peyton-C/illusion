@@ -236,3 +236,4 @@ lipgloss.example.yaml.local
 claws.yaml
 kiosk.yaml
 bot.yaml
+.vscode/settings.json

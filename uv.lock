@@ -529,8 +529,8 @@ wheels = [
 
 [[package]]
 name = "niimprint"
-version = "0.1.1"
-source = { git = "https://github.com/Peyton-C/niimprint#101afaa1859ce008ce2211435a6210cdbf6da4b9" }
+version = "0.1.3"
+source = { git = "https://github.com/Peyton-C/niimprint#9940d0dbd7cc15f327aecab9991e9046253508cc" }
 dependencies = [
     { name = "click" },
     { name = "pillow" },

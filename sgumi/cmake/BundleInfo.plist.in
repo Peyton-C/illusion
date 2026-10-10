@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The macOS bundle's Info.plist.
+
+  CMake ships a default template, but it has no CFBundleIconName, and without
+  that key macOS reads only the .icns and never looks in Assets.car -- which is
+  where the layered macOS 26 icon lives. Hence a template of our own.
+
+  Substituted twice: configure_file() fills the @-delimited values at configure
+  time, then CMake fills the MACOSX_BUNDLE_ dollar-brace ones when it generates
+  the bundle. @ONLY on the configure_file call is what keeps the second set
+  intact for CMake to deal with.
+
+  Do not write a dollar-brace placeholder in this comment. CMake substitutes
+  the whole file, comments included, and a wildcard inside one is a syntax
+  error rather than the illustration it looks like.
+-->
+<plist version="1.0">
+<dict>
+	<key>CFBundleExecutable</key>
+	<string>${MACOSX_BUNDLE_EXECUTABLE_NAME}</string>
+	<key>CFBundleIdentifier</key>
+	<string>${MACOSX_BUNDLE_GUI_IDENTIFIER}</string>
+	<key>CFBundleVersion</key>
+	<string>${MACOSX_BUNDLE_BUNDLE_VERSION}</string>
+	<key>CFBundleShortVersionString</key>
+	<string>${MACOSX_BUNDLE_SHORT_VERSION_STRING}</string>
+
+	<!-- Two names, because macOS shows them in different places and has
+	     different room for them. CFBundleDisplayName is Finder, Get Info,
+	     Spotlight and the Dock tooltip, and is free to be the full name;
+	     CFBundleName is the menu bar, where anything past about 16 characters
+	     is truncated. "SGUMI" fits either, which is the one advantage of an
+	     acronym this aggressive. -->
+	<key>CFBundleDisplayName</key>
+	<string>@SGUMI_APP_DISPLAY_NAME@</string>
+	<key>CFBundleName</key>
+	<string>${MACOSX_BUNDLE_BUNDLE_NAME}</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+
+	<!-- The flattened fallback, read by everything before macOS 11. -->
+	<key>CFBundleIconFile</key>
+	<string>@SGUMI_ICON_NAME@</string>@SGUMI_ICON_NAME_KEY@
+
+	<!-- SDL asks for a high-DPI swapchain; without this macOS hands the
+	     window a 1x backing store and upscales it, which is not subtle on a
+	     Retina display. -->
+	<key>NSHighResolutionCapable</key>
+	<true/>
+
+	<!-- macOS shows this string in the local network consent prompt.
+	     Loopback does not trigger it, so running beside lipgloss on the kiosk
+	     never sees this -- but pointing SGUMI at the printer host across the
+	     tailnet (100.x.y.z) does, and macOS asks with no explanation at all
+	     when the key is missing. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Talks to the lipgloss print service on the local network.</string>
+</dict>
+</plist>
