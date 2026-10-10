@@ -7,9 +7,10 @@ SDL, Dear ImGui, nlohmann/json and stb are vendored as submodules under `sgumi/t
 ### Alpine
 ```sh
 doas apk add build-base cmake git pkgconf curl-dev \
-    mesa-dev mesa-vulkan-ati mesa-vulkan-intel vulkan-loader \
+    mesa-dev vulkan-loader libxscrnsaver-dev libxtst-dev \
+    mesa-vulkan-ati mesa-vulkan-intel åmesa-vulkan-nouveau mesa-vulkan-swrast \
     libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev \
-    libxkbcommon-dev wayland-dev libxscrnsaver-dev libxtst-dev
+    libxkbcommon-dev wayland-dev
 ```
 
 `mesa-vulkan-*` is per-GPU — install the one matching the laptop, or `mesa-vulkan-swrast` for software rendering, which is fine for a UI this static.
