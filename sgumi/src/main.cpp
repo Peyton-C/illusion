@@ -16,6 +16,10 @@
 #include "Theme.hpp"
 #include "build_info.h"
 
+#if defined(SGUMI_WINDOW_ICON)
+#include "window_icon.h"
+#endif
+
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #include "imgui.h"
@@ -2142,6 +2146,35 @@ void drawQueue(const lipgloss::Snapshot& snapshot, lipgloss::Client& client) {
     }
 }
 
+#if defined(SGUMI_WINDOW_ICON)
+// The icon in the window's own title bar. Linux only
+void setWindowIcon(SDL_Window* window) {
+    image::Bitmap icon;
+
+    if (!image::decode(kWindowIconPng, sizeof(kWindowIconPng), icon)) {
+        std::cerr << "Window icon: could not decode the embedded PNG\n";
+        return;
+    }
+
+    SDL_Surface* surface = SDL_CreateSurfaceFrom(
+        icon.width, icon.height, SDL_PIXELFORMAT_RGBA32,
+        icon.pixels.data(), icon.width * 4);
+
+    if (!surface) {
+        std::cerr << "Window icon: " << SDL_GetError() << "\n";
+        return;
+    }
+
+    if (!SDL_SetWindowIcon(window, surface)) {
+        std::cerr << "Window icon: " << SDL_GetError() << "\n";
+    }
+
+    // SDL keeps its own converted copy, so neither the surface nor the bitmap
+    // under it has to outlive this call.
+    SDL_DestroySurface(surface);
+}
+#endif
+
 int runSgumi() {
     SDL_SetAppMetadata("SGUMI", SGUMI_VERSION, kAppId);
 
@@ -2167,6 +2200,10 @@ int runSgumi() {
         SDL_Quit();
         return -1;
     }
+
+#if defined(SGUMI_WINDOW_ICON)
+    setWindowIcon(window);
+#endif
 
     // No DXIL here. The 2027 frontend advertises it because its NV12 pipeline
     // ships precompiled DXIL blobs; SGUMI compiles no shaders of its own, and
